@@ -39,7 +39,7 @@
 在 CC 电脑的 shell 里执行：
 
 ```
-wget run https://raw.githubusercontent.com/colorgarden/netease-cloud-music-cc/main/install.lua
+wget run https://raw.githubusercontent.com/colorgarden/NeteaseCloudMusicApiLibCCT/main/install.lua
 ```
 
 脚本会：
@@ -52,7 +52,7 @@ wget run https://raw.githubusercontent.com/colorgarden/netease-cloud-music-cc/ma
 自定义镜像 / 自建源：
 
 ```
-wget run <install.lua 的 URL> https://你的镜像/netease-cloud-music-cc/main
+wget run <install.lua 的 URL> https://你的镜像/NeteaseCloudMusicApiLibCCT/main
 ```
 
 > 说明：CC 的 `require` 是**相对程序目录**解析的。默认装到根目录 `/`，所以把你的程序也放在 `/`
