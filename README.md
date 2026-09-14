@@ -58,8 +58,18 @@ wget run https://cdn.jsdelivr.net/gh/colorgarden/NeteaseCloudMusicApiLibCCT@main
 wget run <install.lua 的 URL> https://你的镜像/NeteaseCloudMusicApiLibCCT/main
 ```
 
-> 说明：CC 的 `require` 是**相对程序目录**解析的。默认装到根目录 `/`，所以把你的程序也放在 `/`
-> （默认 shell 目录）即可 `require("ncm")`；或者把 `ncm/`、`aeslua/` 放到你程序所在目录。
+> **关于 `require` 路径**:CC 的 `require` 是**相对「程序所在目录」**解析的(不是当前工作目录)。
+> 默认把库装到根目录 `/`,因此:
+> - 程序放在 `/`(例如 `/myprog.lua`)→ 直接 `require("ncm")` 即可;
+> - 程序放在子目录(例如 `/home/0/prog.lua`)→ 在程序开头加一行:
+>
+>   ```lua
+>   package.path = "/?.lua;/?/init.lua;" .. package.path
+>   local ncm = require("ncm")
+>   ```
+>
+> 另外,用 `wget run install.lua` 安装时,脚本运行在 `/rom/programs/http`,所以**安装器自己**
+> 无法 `require("ncm")`(它只做文件校验)——这是正常的,不影响安装结果。
 
 ---
 
