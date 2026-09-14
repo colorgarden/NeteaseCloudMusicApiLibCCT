@@ -7,7 +7,7 @@ read_globals = {
   "http", "fs", "term", "peripheral", "rednet", "redstone", "turtle",
   "shell", "textutils", "colors", "colours", "keys", "commands",
   "multishell", "paintutils", "pocket", "vector", "gps", "settings",
-  "parallel", "sleep", "write", "read",
+  "parallel", "sleep", "write", "read", "printError",
   "aeslua",
 }
 
