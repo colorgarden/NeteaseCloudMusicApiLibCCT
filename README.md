@@ -47,16 +47,32 @@ wget run https://cdn.jsdelivr.net/gh/colorgarden/NeteaseCloudMusicApiLibCCT@main
 
 脚本会：
 
-1. 检测并**删除已安装的旧版本**（`/ncm`、`/aeslua.lua`、`/aeslua`）；
-2. 从仓库**流式下载并解包** `dist/ncm.tar`（边下边写，不占额外磁盘、不需要 gzip 库）；
-3. **自动下载依赖** `aeslua-cc`（来自 jsDelivr）；
-4. 自检 `require("ncm")` 并打印用法。
+1. **交互式让你选择下载源**（jsDelivr / GitHub raw / ghproxy.net 加速 / 自定义 URL）；
+2. 检测并**删除已安装的旧版本**（`/ncm`、`/aeslua.lua`、`/aeslua`）；
+3. 从所选源**流式下载并解包** `dist/ncm.tar`（边下边写，不占额外磁盘、不需要 gzip 库）；
+4. **自动下载依赖** `aeslua-cc`（跟随所选源）；
+5. 校验文件并打印用法。
 
-自定义镜像 / 自建源：
+安装时会看到：
 
 ```
-wget run <install.lua 的 URL> https://你的镜像/NeteaseCloudMusicApiLibCCT/main
+请选择下载源 / Choose a download source:
+  1) jsDelivr (推荐 / recommended)
+  2) GitHub raw
+  3) ghproxy.net (GitHub 加速)
+  4) 自定义 (custom URL)
+序号 [1]:
 ```
+
+直接回车 = jsDelivr。无人值守（CI / 无 stdin）时自动使用 jsDelivr。
+
+自定义镜像 / 自建源（非交互，跳过菜单）：
+
+```
+wget run <install.lua 的 URL> https://你的镜像/colorgarden/NeteaseCloudMusicApiLibCCT/main
+```
+
+第二个参数可选，用于单独指定 aeslua 依赖地址。
 
 > **关于 `require` 路径**:CC 的 `require` 是**相对「程序所在目录」**解析的(不是当前工作目录)。
 > 默认把库装到根目录 `/`,因此:
