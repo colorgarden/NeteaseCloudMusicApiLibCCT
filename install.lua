@@ -33,7 +33,72 @@ local CONFIG = {
 }
 
 local args = { ... }
-if args[1] and args[1] ~= "" then CONFIG.base = args[1]:gsub("/+$", "") end
+
+-- --------------------------------------------------------------- source pick
+-- The library (this repo) and the aeslua-cc dependency are mirrored together.
+local MIRRORS = {
+  {
+    name = "jsDelivr (推荐 / recommended)",
+    lib = "https://cdn.jsdelivr.net/gh/colorgarden/NeteaseCloudMusicApiLibCCT@main",
+    aes = "https://cdn.jsdelivr.net/gh/AngusAU293/aeslua-cc@0.2.1-CC/src",
+  },
+  {
+    name = "GitHub raw",
+    lib = "https://raw.githubusercontent.com/colorgarden/NeteaseCloudMusicApiLibCCT/main",
+    aes = "https://raw.githubusercontent.com/AngusAU293/aeslua-cc/0.2.1-CC/src",
+  },
+  {
+    name = "ghproxy.net (GitHub 加速)",
+    lib = "https://ghproxy.net/https://raw.githubusercontent.com/colorgarden/NeteaseCloudMusicApiLibCCT/main",
+    aes = "https://ghproxy.net/https://raw.githubusercontent.com/AngusAU293/aeslua-cc/0.2.1-CC/src",
+  },
+}
+
+local function trim(s)
+  return (s:gsub("^%s+", ""):gsub("%s+$", ""))
+end
+
+-- Reads one line; returns "" when the input stream is closed (non-interactive).
+local function ask(prompt)
+  if prompt then write(prompt) end
+  local ans = read and read() or nil
+  if ans == nil then return "" end
+  return trim(ans)
+end
+
+-- Interactive menu unless base URLs were given on the command line:
+--   install.lua [libBaseUrl] [aesluaBaseUrl]
+local function pickSource()
+  if args[1] and args[1] ~= "" then
+    CONFIG.base = args[1]:gsub("/+$", "")
+    if args[2] and args[2] ~= "" then CONFIG.aeslua = args[2]:gsub("/+$", "") end
+    print("使用命令行指定的源: " .. CONFIG.base)
+    return
+  end
+
+  print("请选择下载源 / Choose a download source:")
+  for i, m in ipairs(MIRRORS) do print(("  %d) %s"):format(i, m.name)) end
+  print(("  %d) 自定义 (custom URL)"):format(#MIRRORS + 1))
+
+  local n = tonumber(ask("序号 [1]: ")) or 1
+  if n >= 1 and n <= #MIRRORS then
+    CONFIG.base = MIRRORS[n].lib
+    CONFIG.aeslua = MIRRORS[n].aes
+    print("已选择: " .. MIRRORS[n].name)
+  elseif n == #MIRRORS + 1 then
+    local u = ask("库地址 (dist/ncm.tar 的 base URL): ")
+    if u ~= "" then CONFIG.base = u:gsub("/+$", "") end
+    local a = ask("aeslua 依赖地址 [默认 jsDelivr]: ")
+    if a ~= "" then CONFIG.aeslua = a:gsub("/+$", "") end
+    print("已选择自定义源")
+  else
+    CONFIG.base = MIRRORS[1].lib
+    CONFIG.aeslua = MIRRORS[1].aes
+    print("输入无效，使用默认: " .. MIRRORS[1].name)
+  end
+end
+
+pickSource()
 
 -- ----------------------------------------------------------------- utilities
 local function log(fmt, ...)
