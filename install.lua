@@ -179,21 +179,23 @@ for _, rel in ipairs(deps) do
 end
 log("  installed %d dependency files", #deps)
 
--- 4. sanity check
-local ok, mod = pcall(require, "ncm")
-if ok then
-  log("Verifying ... OK (ncm loaded, %d modules)", (function()
-    local n = 0
-    for _ in pairs(mod) do n = n + 1 end
-    return n
-  end)())
+-- 4. verify files landed and print usage.
+-- We deliberately do NOT call require("ncm") here: `wget run` executes this
+-- installer from /rom/programs/http, and CraftOS resolves relative modules
+-- against the *program's* directory, so it cannot see ncm/ from there. That is
+-- expected and not an install failure.
+if fs.exists(root .. "ncm/init.lua") and fs.exists(root .. "aeslua.lua") then
+  log("Verifying ... OK (%sncm/init.lua and %saeslua.lua present)", root, root)
 else
-  log("Warning: `require(\"ncm\")` failed here: %s", tostring(mod))
-  log("Run your program from %s (so ncm/ and aeslua/ are on the module path).", root)
+  log("Warning: expected files are missing under %s", root)
 end
 
 log("")
-log("Done. Example:")
-log("  local ncm = require(\"ncm\")")
-log("  local r = ncm.search({ keywords = \"周杰伦\" })")
-log("  print(textutils.serialize(r.body))")
+log("Done. To use it:")
+log("  * if your program lives in %s, just require it:", root)
+log("      local ncm = require(\"ncm\")")
+log("  * otherwise put this line at the top of your program:")
+log("      package.path = \"/?.lua;/?/init.lua;\" .. package.path")
+log("      local ncm = require(\"ncm\")")
+log("  Example:")
+log("      print(textutils.serialize(ncm.search({ keywords = \"周杰伦\" }).body.result))")
