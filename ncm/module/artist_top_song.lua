@@ -1,0 +1,11 @@
+-- 歌手热门 50 首歌曲
+local createOption = require("ncm.util.option")
+local js = require("ncm.util.js")
+
+return function(query, request)
+  local data = {
+    id = query.id,
+  }
+  if js.falsy(query.crypto) then query.crypto = nil end
+  return request("/api/artist/top/song", data, createOption(query, "weapi"))
+end

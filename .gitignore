@@ -1,0 +1,19 @@
+# Third-party / development-only sources (not part of the distributable)
+/reference/
+/deps/
+/vendor/
+/aeslua_cc/
+/test/
+
+# Dev-only tooling
+/tools/PORTING.md
+/tools/batches/
+/tools/verify_all.js
+/tools/verify_all_parallel.js
+/tools/check.sh
+
+# Local logs / artifacts
+*.log
+.audit*.log
+.verify.log
+.DS_Store
