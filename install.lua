@@ -15,7 +15,7 @@
       (and cdn.jsdelivr.net) in its http whitelist.
 
   Usage
-    wget run https://raw.githubusercontent.com/colorgarden/NeteaseCloudMusicApiLibCCT/main/install.lua
+    wget run https://cdn.jsdelivr.net/gh/colorgarden/NeteaseCloudMusicApiLibCCT@main/install.lua
     -- or, with a custom base URL for the library bundle:
     wget run <url> https://my.mirror/ncm
 
@@ -25,7 +25,7 @@
 
 local CONFIG = {
   -- Where the library bundle (dist/ncm.tar) is served from.
-  base = "https://raw.githubusercontent.com/colorgarden/NeteaseCloudMusicApiLibCCT/main",
+  base = "https://cdn.jsdelivr.net/gh/colorgarden/NeteaseCloudMusicApiLibCCT@main",
   -- Where ncm/ and aeslua/ are installed (must end with "/").
   root = "/",
   -- aeslua-cc dependency (pure-Lua AES primitives).

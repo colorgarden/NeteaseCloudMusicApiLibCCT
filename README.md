@@ -39,8 +39,11 @@
 在 CC 电脑的 shell 里执行：
 
 ```
-wget run https://raw.githubusercontent.com/colorgarden/NeteaseCloudMusicApiLibCCT/main/install.lua
+wget run https://cdn.jsdelivr.net/gh/colorgarden/NeteaseCloudMusicApiLibCCT@main/install.lua
 ```
+
+（备用地址，若 jsDelivr 不可用：把上面的 URL 换成
+`https://raw.githubusercontent.com/colorgarden/NeteaseCloudMusicApiLibCCT/main/install.lua`。）
 
 脚本会：
 
