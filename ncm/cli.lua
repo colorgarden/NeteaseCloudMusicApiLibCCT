@@ -173,29 +173,33 @@ local function playSong(id, displayName)
 
   local audio = require("ncm.util.audio")
 
-  print("1/3 Downloading the whole stream ...")
-  local flac, derr = audio.download(url, {
-    onProgress = function(n)
-      term.clearLine()
-      term.write(("  %.2f MB"):format(n / 1048576))
-    end,
-  })
-  print("")
-  if not flac then
-    print("Download failed: " .. tostring(derr))
-    waitForEnter()
-    return
-  end
+  -- Download and decode in a scope so the raw FLAC (tens of MB, kept in memory
+  -- because CC's internal disk is ~1 MB) is released before playback.
+  local dfpwm, samplesOrErr
+  do
+    print("1/3 Downloading the whole stream ...")
+    local flac, derr = audio.download(url, {
+      onProgress = function(n)
+        term.clearLine()
+        term.write(("  %.2f MB"):format(n / 1048576))
+      end,
+    })
+    print("")
+    if not flac then
+      print("Download failed: " .. tostring(derr))
+      waitForEnter()
+      return
+    end
 
-  print("2/3 Decoding (no deadline; this can take a while) ...")
-  local dfpwm, samplesOrErr = audio.flacToDfpwm({ data = flac }, {
-    onProgress = function(total, dec)
-      term.clearLine()
-      term.write(("  decoded %.0f s @ %d Hz"):format(total / 48000, dec.sampleRate))
-    end,
-  })
-  print("")
-  flac = nil -- release the FLAC copy before playback
+    print("2/3 Decoding (no deadline; this can take a while) ...")
+    dfpwm, samplesOrErr = audio.flacToDfpwm({ data = flac }, {
+      onProgress = function(total, dec)
+        term.clearLine()
+        term.write(("  decoded %.0f s @ %d Hz"):format(total / 48000, dec.sampleRate))
+      end,
+    })
+    print("")
+  end
   if not dfpwm then
     print("Decode failed: " .. tostring(samplesOrErr))
     waitForEnter()

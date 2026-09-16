@@ -420,22 +420,24 @@ function M.playFlacBuffered(source, opts)
   local speaker = resolveSpeaker(opts.speaker)
   if not speaker then return nil, "no speaker attached" end
 
-  local data
-  if type(source) == "table" then
-    data = source.data
-  elseif type(source) == "string" and source:match("^https?://") then
-    local bytes, derr = M.download(source, { onProgress = opts.onDownload })
-    if not bytes then return nil, derr end
-    data = bytes
+  -- Decode inside a scope so the raw FLAC copy (potentially tens of MB, held in
+  -- memory because CC's internal disk is only ~1 MB) is released before
+  -- playback starts.
+  local encoded, samplesOrErr
+  do
+    local input = source
+    if type(source) == "string" and source:match("^https?://") then
+      local bytes, derr = M.download(source, { onProgress = opts.onDownload })
+      if not bytes then return nil, derr end
+      input = { data = bytes }
+    end
+    encoded, samplesOrErr = M.flacToDfpwm(input, opts)
   end
-
-  local dfpwm, samplesOrErr = M.flacToDfpwm(data and { data = data } or source, opts)
-  data = nil -- release the FLAC copy before playback
-  if not dfpwm then return nil, samplesOrErr end
+  if not encoded then return nil, samplesOrErr end
 
   if opts.onDecoded then opts.onDecoded(samplesOrErr) end
   opts.speaker = speaker
-  return M.playDfpwmData(dfpwm, opts)
+  return M.playDfpwmData(encoded, opts)
 end
 
 -- Decode a whole FLAC (HTTP(S) URL or local path) into a .dfpwm file at
