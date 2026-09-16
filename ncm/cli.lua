@@ -392,7 +392,10 @@ local function drawQr(qrurl)
     if cols <= w and rows <= h - 1 then
       local drawn = qr.printCC(qrurl, { border = 1, ecl = "L" })
       if drawn then return drawn end
-      qr.draw(qrurl, { border = 1, ecl = "L" })
+      -- printCC needs term.blit; without it, just hand over the URL.
+      print("Cannot draw the QR on this terminal; open this URL with the app:")
+      print(qrurl)
+      print("")
       return h
     end
   end

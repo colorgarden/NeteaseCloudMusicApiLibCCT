@@ -9,8 +9,8 @@
     3. streams dist/ncm.tar off the internet straight into the filesystem
        (uncompressed USTAR - no gzip library or temp file needed),
     4. downloads the aeslua-cc dependency,
-    5. downloads cc_speakerlib, the speaker program `ncm/cli` uses for local
-       .dfpwm passthrough,
+    5. downloads cc_speakerlib, the speaker program `ncm/cli` uses for .dfpwm passthrough and
+       mp3/aac remote transcoding,
     6. verifies the bundle it extracted is current, and prints a usage hint.
 
   Everything the installer fetches is small (a few hundred KB at most, far
@@ -56,7 +56,7 @@ local CONFIG = {
   -- aeslua-cc dependency (pure-Lua AES primitives).
   aeslua = "https://cdn.jsdelivr.net/gh/AngusAU293/aeslua-cc@0.2.1-CC/src",
   -- cc_big_http HARD dependency (GPL-2.0). Fixed upstream URL: it is not part
-  -- of our MIT-licensed bundle, so the library mirror selection below never
+  -- of our this project's bundle, so the library mirror selection below never
   -- affects it. It is downloaded with the plain http API first (bootstrap),
   -- then used for every other GET. The server's http_whitelist must include
   -- git.liulikeji.cn or this download fails.
@@ -405,8 +405,8 @@ end
 
 -- 5. download cc_speakerlib as the `speaker` program, next to cc_big_http.lua
 -- so its automatic detection finds it. `ncm/cli` launches it by absolute path
--- to play local .dfpwm files only, so its remote-transcode default (-server)
--- is never used.
+-- to play .dfpwm passthrough links and mp3/aac links, which it transcodes
+-- remotely through its -server default.
 local spBytes, spErr = fetchDep(CONFIG.speakerlib, libDir .. "speaker.lua",
   "cc_speakerlib (the `speaker` program)")
 if not spBytes then die("cannot download speakerlib.lua: " .. tostring(spErr)) end
