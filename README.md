@@ -366,8 +366,9 @@ ncm/cli
 `/ncm/lib/speaker.lua`。它**自身会去同目录查找 `cc_big_http.lua`**（两者同装在 `/ncm/lib/` 下，天然配合）。
 其源码头部声明 `SPDX-License-Identifier: MPL-2.0`（衍生自 CC:Tweaked 的 `speaker` 程序），
 但**上游仓库没有 LICENSE 文件**。同样地，本项目**不内置**它，由安装脚本从上游现场下载。
-它默认带一个远程转码接口（`-server`），但 `ncm/cli` 只让它播放**本地 `.dfpwm` 直通**，
-**不会**触发任何远程转码。
+它默认带一个远程转码接口（`-server`，默认 `http://newgmapi.liulikeji.cn/api/ffmpeg`）。
+`ncm/cli` 在两种情况下启动它：播放**本地 `.dfpwm` 直通**，以及播放 **mp3/aac 链接**时
+通过该服务远程转码成 DFPWM（纯 Lua 解码器解不了 mp3；远程转码后播放几乎不耗 CPU）。
 
 本移植自身以 **GPL-2.0** 许可发布，详见 [LICENSE](LICENSE)。
 （原为 MIT；因为二维码渲染借鉴了 GPL-2.0 的 GMapiServer，整仓已按 GPL-2.0 发布。）

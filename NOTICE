@@ -42,7 +42,9 @@ builds on, adapts and/or bundles the following components.
    CC: Tweaked `speaker` program.
    NOT included in this distribution. install.lua downloads speakerlib.lua at
    install time and places it at /ncm/lib/speaker.lua. `ncm/cli` launches it to play
-   local .dfpwm files only (its remote-transcode option is never used), and it
+   local .dfpwm files, and to play mp3/aac links via its remote transcode
+   service (its -server option, default http://newgmapi.liulikeji.cn/api/ffmpeg),
+   which returns DFPWM. It
    auto-detects cc_big_http.lua in its own directory. This project
    neither copies nor redistributes speakerlib.lua.
 
