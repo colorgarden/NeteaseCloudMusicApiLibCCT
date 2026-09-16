@@ -63,7 +63,7 @@ local CONFIG = {
   ccBigHttp = "https://git.liulikeji.cn/xingluo/cc_big_http/raw/branch/main/cc_big_http.lua",
   -- cc_speakerlib, installed as /speaker.lua. Its own SPDX header declares
   -- MPL-2.0 (the upstream repo ships no LICENSE file). Like cc_big_http it is
-  -- NOT bundled with this MIT project and is fetched from its fixed upstream
+  -- NOT bundled with this project and is fetched from its fixed upstream
   -- URL. It is the `speaker` program `ncm/cli` launches for local .dfpwm
   -- passthrough, and it auto-detects /cc_big_http.lua next to itself.
   speakerlib = "https://git.liulikeji.cn/xingluo/cc_speakerlib/raw/branch/main/speakerlib.lua",

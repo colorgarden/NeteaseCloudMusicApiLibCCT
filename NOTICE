@@ -33,7 +33,7 @@ builds on, adapts and/or bundles the following components.
    outgoing GET (via ncm/util/httpx.lua) goes through it so that large responses
    are fetched with HTTP Range requests in 15 MiB chunks, working around the
    single HTTP response size cap (http_max_download, 16 MiB by default). This
-   project (MIT) neither copies nor redistributes cc_big_http.lua.
+   project (GPL-2.0) neither copies nor redistributes cc_big_http.lua.
 
 6. cc_speakerlib  (the `speaker` program; HARD runtime dependency, NOT bundled)
    https://git.liulikeji.cn/xingluo/cc_speakerlib

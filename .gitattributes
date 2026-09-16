@@ -1,0 +1,10 @@
+# The library itself is pure Lua. Everything below is host-side developer
+# tooling (Node/Shell) that is never shipped: dist/ncm.tar contains 0 .js/.sh
+# files. Marking it non-detectable keeps GitHub's language stats honest.
+tools/*.js    linguist-detectable=false
+tools/*.sh    linguist-detectable=false
+test/*.js     linguist-detectable=false
+test/diff/*.js linguist-detectable=false
+*.sh          linguist-detectable=false
+tools/        linguist-documentation=true
+test/         linguist-documentation=true
