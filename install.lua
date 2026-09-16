@@ -321,8 +321,17 @@ local deps = {
   "aeslua/gf.lua",
   "aeslua/util.lua",
 }
+-- Fallback source for aeslua-cc. Some GitHub proxies 404 this repository
+-- (verified: ghproxy.net returns 404 for it while proxying other repos fine),
+-- and raw.githubusercontent.com is unreachable on some networks. jsDelivr
+-- serves the tag reliably, so retry every file there before giving up.
+local AESLUA_FALLBACK = "https://cdn.jsdelivr.net/gh/AngusAU293/aeslua-cc@0.2.1-CC/src"
 for _, rel in ipairs(deps) do
   local bytes, derr = fetchToFile(big, CONFIG.aeslua .. "/" .. rel, root .. rel)
+  if not bytes and CONFIG.aeslua ~= AESLUA_FALLBACK then
+    log("  %s: mirror failed (%s), retrying via jsDelivr ...", rel, tostring(derr))
+    bytes, derr = fetchToFile(big, AESLUA_FALLBACK .. "/" .. rel, root .. rel)
+  end
   if not bytes then die("cannot download " .. rel .. ": " .. tostring(derr)) end
 end
 log("  installed %d dependency files", #deps)
