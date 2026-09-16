@@ -205,74 +205,13 @@ local function playSong(id, displayName)
     return
   end
 
-  -- Prefer the API's own type field; fall back to the URL suffix.
+  -- Everything goes to the speaker program. It asks its transcode service
+  -- (-server, default http://newgmapi.liulikeji.cn/api/ffmpeg) for a DFPWM
+  -- stream, so playback costs this computer almost no CPU and is smooth even
+  -- though a pure-Lua FLAC decode cannot keep up in real time.
   local kind = tostring(entry.type or ""):lower()
-  local isFlac = kind == "flac" or tostring(url):lower():match("%.flac") ~= nil
-
-  if not isFlac then
-    launchSpeakerProgram(url,
-      "This link is not FLAC (type=" .. (kind ~= "" and kind or "?") .. ").")
-    waitForEnter()
-    return
-  end
-
-  local speaker = findSpeaker()
-  if not speaker then
-    print("No speaker attached.")
-    waitForEnter()
-    return
-  end
-
-  local audio = require("ncm.util.audio")
-
-  -- Download and decode in a scope so the raw FLAC (tens of MB, kept in memory
-  -- because CC's internal disk is ~1 MB) is released before playback.
-  local dfpwm, samplesOrErr
-  do
-    print("1/3 Downloading the whole stream ...")
-    local sizeHint = tonumber(entry.size)
-    local flac, derr = audio.download(url, {
-      onProgress = function(n)
-        drawProgress("Download ", n, sizeHint, ("%.2f MB"):format(n / 1048576))
-      end,
-    })
-    finishProgress()
-    if not flac then
-      print("Download failed: " .. tostring(derr))
-      waitForEnter()
-      return
-    end
-
-    print("2/3 Decoding (no deadline; this can take a while) ...")
-    dfpwm, samplesOrErr = audio.flacToDfpwm({ data = flac }, {
-      onProgress = function(total, dec, srcTotal)
-        drawProgress("Decode   ", srcTotal, dec.totalSamples,
-          ("%.0fs"):format(total / 48000))
-      end,
-    })
-    finishProgress()
-  end
-  if not dfpwm then
-    print("Decode failed: " .. tostring(samplesOrErr))
-    waitForEnter()
-    return
-  end
-
-  print("3/3 Playing (Ctrl+T to stop) ...")
-  local totalSamples = samplesOrErr
-  local samples, err = audio.playDfpwmData(dfpwm, {
-    volume = 1.0,
-    speaker = speaker,
-    onProgress = function(played)
-      drawProgress("Play     ", played, totalSamples, ("%.0fs"):format(played / 48000))
-    end,
-  })
-  finishProgress()
-  if not samples then
-    print("Playback failed: " .. tostring(err))
-  else
-    print(("Done: %.1f seconds played."):format(samples / 48000))
-  end
+  launchSpeakerProgram(url, ("type=%s level=%s")
+    :format(kind ~= "" and kind or "?", tostring(entry.level or "?")))
   waitForEnter()
 end
 
