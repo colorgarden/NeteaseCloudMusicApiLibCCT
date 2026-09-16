@@ -1,6 +1,7 @@
 Third-party notices
 
-This project (MIT) builds on and/or bundles the following components.
+This project is distributed under the GNU General Public License v2.0. It
+builds on, adapts and/or bundles the following components.
 
 1. NeteaseCloudMusicApi  (the original Node.js implementation this is a port of)
    https://github.com/Binaryify/NeteaseCloudMusicApi
@@ -42,5 +43,13 @@ This project (MIT) builds on and/or bundles the following components.
    NOT included in this distribution. install.lua downloads speakerlib.lua at
    install time and places it at /ncm/lib/speaker.lua. `ncm/cli` launches it to play
    local .dfpwm files only (its remote-transcode option is never used), and it
-   auto-detects cc_big_http.lua in its own directory. This project (MIT)
+   auto-detects cc_big_http.lua in its own directory. This project
    neither copies nor redistributes speakerlib.lua.
+
+7. GMapiServer  (CC-font subpixel QR packing algorithm)
+   https://git.liulikeji.cn/xingluo/GMapiServer
+   License: GNU General Public License v2.0 (GPL-2.0)
+   ncm/util/qrcode.lua adapts the 3x2 subpixel packing heuristic from
+   qr_bimg_utils.py, so one character cell can display six QR modules using
+   CC:Tweaked's built-in 0x80-0x9F glyphs. That code is GPL-2.0, so this
+   project as a whole is now distributed under GPL-2.0 (see LICENSE).

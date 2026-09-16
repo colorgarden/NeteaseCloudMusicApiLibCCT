@@ -858,5 +858,166 @@ function M.draw(text, opts)
   if oldFg ~= nil then termApi.setTextColour(oldFg) end
 end
 
+-- ============================================================================
+-- CC-font subpixel renderer
+-- ============================================================================
+-- CC:Tweaked's built-in font gives byte values 0x80-0x9F a glyph that is a
+-- 3x2 subpixel pattern, so ONE character cell can show six QR modules. That
+-- packs a QR into half as many columns and a third of the rows, which is what
+-- makes a 33-module code fit a default 51x19 terminal while leaving a row for
+-- status text. Colours are applied per cell through `term.blit`, whose text
+-- argument is byte-oriented - which is exactly why those glyph bytes are
+-- usable at all. (Braille and block characters have no glyph in that font and
+-- render as garbage, which is why the other styles are unsuitable here.)
+--
+-- The packing heuristic is adapted from GMapiServer's qr_bimg_utils.py:
+--   https://git.liulikeji.cn/xingluo/GMapiServer
+--   GPL-2.0 - see NOTICE.
+
+-- Per-subpixel fallback sampling order, used when a subpixel is neither of the
+-- two dominant states of its 3x2 block.
+local SAMPLING_LOOKUP = {
+  { 1, 2, 3, 4, 5 },
+  { 3, 0, 5, 2, 4 },
+  { 0, 3, 4, 1, 5 },
+  { 1, 5, 2, 4, 0 },
+  { 2, 5, 0, 3, 1 },
+  { 3, 4, 1, 2, 0 },
+}
+
+-- t = {b1, b2, b3, b4, b5, b6} module states (1 = dark).
+-- Returns glyphByte, state1, state2 where the glyph's "on" subpixels carry
+-- state1 and its "off" subpixels carry state2.
+local function calculateTexel(t)
+  local counts, order = {}, {}
+  for i = 1, 6 do
+    local v = t[i]
+    if counts[v] == nil then
+      counts[v] = 0
+      order[#order + 1] = v
+    end
+    counts[v] = counts[v] + 1
+  end
+  -- Most common state first; ties keep insertion order, as in the original.
+  table.sort(order, function(a, b) return counts[a] > counts[b] end)
+
+  local stream = {}
+  for i = 1, 6 do
+    local v = t[i]
+    if v == order[1] then
+      stream[i] = 1
+    elseif order[2] ~= nil and v == order[2] then
+      stream[i] = 0
+    else
+      stream[i] = 0
+      for _, sample in ipairs(SAMPLING_LOOKUP[i]) do
+        local s = t[sample + 1]
+        if s == order[1] then
+          stream[i] = 1
+          break
+        elseif order[2] ~= nil and s == order[2] then
+          stream[i] = 0
+          break
+        end
+      end
+    end
+  end
+
+  -- Glyph = 0x80 plus the mask of subpixels differing from subpixel 6.
+  local byte = 128
+  local ref = stream[6]
+  if stream[1] ~= ref then byte = byte + 1 end
+  if stream[2] ~= ref then byte = byte + 2 end
+  if stream[3] ~= ref then byte = byte + 4 end
+  if stream[4] ~= ref then byte = byte + 8 end
+  if stream[5] ~= ref then byte = byte + 16 end
+
+  local state1, state2
+  if order[2] ~= nil then
+    -- stream == 1 means "same as subpixel 6", so pick the dominant state that
+    -- subpixel 6 actually has.
+    if ref == 1 then
+      state1, state2 = order[2], order[1]
+    else
+      state1, state2 = order[1], order[2]
+    end
+  else
+    state1, state2 = order[1], order[1]
+  end
+  return string.char(byte), state1, state2
+end
+
+-- Draw `text` with the CC-font subpixel packing. Returns the number of rows
+-- drawn, or nil when term.blit is unavailable. opts:
+--   border (default 1), fg (default "f"), bg (default "0"), and anything
+--   encodeMatrix understands (ecl/level/...).
+function M.printCC(text, opts)
+  opts = opts or {}
+  local termApi = rawget(_G, "term")
+  if not termApi or not termApi.blit then return nil end
+
+  local fgChar = type(opts.fg) == "string" and opts.fg or "f"
+  local bgChar = type(opts.bg) == "string" and opts.bg or "0"
+  local border = opts.border
+  if border == nil then border = 1 end
+
+  local qr = encodeMatrix(text, opts)
+  local modules, w = padMatrix(qr, border)
+  local h = w
+
+  -- Packing consumes two columns and three rows at a time, so pad the quiet
+  -- zone until both divide evenly.
+  if w % 2 == 1 then
+    for y = 1, h do modules[y][w + 1] = false end
+    w = w + 1
+  end
+  while h % 3 ~= 0 do
+    h = h + 1
+    local row = {}
+    for x = 1, w do row[x] = false end
+    modules[h] = row
+  end
+
+  local startX, startY = termApi.getCursorPos()
+  local textRow, fgRow, bgRow = {}, {}, {}
+  local rows = 0
+
+  for y = 1, h, 3 do
+    local cell = 0
+    for x = 1, w, 2 do
+      local t = {
+        modules[y][x] and 1 or 0,
+        modules[y][x + 1] and 1 or 0,
+        modules[y + 1][x] and 1 or 0,
+        modules[y + 1][x + 1] and 1 or 0,
+        modules[y + 2][x] and 1 or 0,
+        modules[y + 2][x + 1] and 1 or 0,
+      }
+
+      local glyph, state1, state2
+      if t[1] == t[2] and t[2] == t[3] and t[3] == t[4]
+        and t[4] == t[5] and t[5] == t[6] then
+        -- Uniform block: a blank cell coloured entirely one way.
+        glyph = " "
+        state1, state2 = t[1], t[1]
+      else
+        glyph, state1, state2 = calculateTexel(t)
+      end
+
+      cell = cell + 1
+      textRow[cell] = glyph
+      fgRow[cell] = state1 == 1 and fgChar or bgChar
+      bgRow[cell] = state2 == 1 and fgChar or bgChar
+    end
+
+    termApi.setCursorPos(startX, startY + rows)
+    termApi.blit(table.concat(textRow), table.concat(fgRow), table.concat(bgRow))
+    rows = rows + 1
+  end
+
+  termApi.setCursorPos(startX, startY + rows)
+  return rows
+end
+
 return M
 

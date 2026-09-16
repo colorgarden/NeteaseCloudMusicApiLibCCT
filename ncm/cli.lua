@@ -265,44 +265,28 @@ end
 -- Login / account
 -- ============================================================================
 
--- Half-block renderings tried in order. A login URL is ~68 bytes, which is QR
--- version 5 (37 modules) at ECL M but only version 4 (33 modules) at ECL L;
--- "half" packs two module rows per line, so ECL L + a 1-module quiet zone
--- leaves a free status row on the default 51x19 terminal.
-local QR_CANDIDATES = {
-  { style = "half", border = 1, ecl = "L" },
-  { style = "half", border = 0, ecl = "L" },
-  { style = "half", border = 0, ecl = "M" },
-}
-
--- Pick the first layout whose rendered size fits `w` x `h`, reserving one row
--- at the bottom for status messages. Returns the options table and row count.
-local function pickQrLayout(qrurl, w, h)
-  for _, opts in ipairs(QR_CANDIDATES) do
-    local okEnc, code = pcall(qr.encode, qrurl, opts)
-    if okEnc and type(code) == "table" and code.size then
-      local cols = code.size + opts.border * 2
-      local rows = math.ceil(cols / 2)
-      if cols <= w and rows <= h - 1 then
-        return opts, rows
-      end
-    end
-  end
-  return nil, nil
-end
-
--- Render a QR payload using the best fitting half-block layout. Falls back to
--- printing the raw URL when the code cannot fit the terminal.
+-- Render the login URL as a CC-font subpixel QR: one character cell carries a
+-- 3x2 block of modules using CC:Tweaked's built-in 0x80-0x9F glyphs, so a
+-- 33-module code (ECL L, 1-module quiet zone) becomes 17 columns x 12 rows.
+-- That fits the default 51x19 terminal with a spare row, and unlike the
+-- braille/half-block styles it does not depend on glyphs the CC font lacks.
+-- Returns the row the caller should print status text at.
 local function drawQr(qrurl)
   local w, h = term.getSize()
-  local opts = pickQrLayout(qrurl, w, h)
-  if opts then
-    qr.printASCII(qrurl, opts)
-  else
-    print("QR too large for this terminal; open this URL with the app:")
-    print(qrurl)
-    print("")
+  local okEnc, code = pcall(qr.encode, qrurl, { ecl = "L" })
+  if okEnc and type(code) == "table" and code.size then
+    local cols = code.size + 2 -- one quiet-zone module on each side
+    local rows = math.ceil(cols / 2)
+    if cols <= w and rows <= h - 1 then
+      local drawn = qr.printCC(qrurl, { border = 1, ecl = "L" })
+      if drawn then return drawn end
+      qr.draw(qrurl, { border = 1, ecl = "L" })
+      return h
+    end
   end
+  print("QR too large for this terminal; open this URL with the app:")
+  print(qrurl)
+  print("")
   return h
 end
 

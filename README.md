@@ -352,16 +352,15 @@ ncm/cli
 | [aeslua-cc](https://github.com/AngusAU293/aeslua-cc) | AES 块原语 | LGPL | 安装脚本自动下载 |
 | [cc_big_http](https://git.liulikeji.cn/xingluo/cc_big_http) | 分块 GET（绕过单响应上限） | **GPL-2.0** | 安装脚本自动下载，**不随本仓库分发** |
 | [cc_speakerlib](https://git.liulikeji.cn/xingluo/cc_speakerlib) | `speaker` 播放程序（本地 DFPWM） | **MPL-2.0**（文件头 SPDX 声明；上游无 LICENSE 文件） | 安装脚本自动下载为 `/ncm/lib/speaker.lua`，**不随本仓库分发** |
+| [GMapiServer](https://git.liulikeji.cn/xingluo/GMapiServer) | 二维码 3×2 子像素打包算法（`qr_bimg_utils.py`） | **GPL-2.0** | 已**改写**进 `ncm/util/qrcode.lua`（整仓因此改为 GPL-2.0） |
 | [LibDeflate](https://github.com/SafeteeWoW/LibDeflate) | gzip 解压 | zlib | 已内置 `ncm/util/libdeflate.lua` |
 | [NeteaseCloudMusicApi](https://github.com/Binaryify/NeteaseCloudMusicApi) | 原始 Node 实现 | MIT | 本移植的上游 |
 
-**关于 `cc_big_http`（请务必阅读）**：它是本库的**硬运行时依赖**——所有对外 GET 都经由
+**关于 `cc_big_http`（请务必阅读）**：它是本库的**硬运行时依赖**——库运行时的对外 GET 都经由
 `ncm/util/httpx.lua` 交给它，用 HTTP `Range` 分块下载来绕过 `http_max_download`（默认 16 MiB）
-的单响应上限。它采用 **GNU GPL-2.0** 许可，与本项目的 **MIT** 许可**不同**。为尊重其许可，
+的单响应上限。它采用 **GNU GPL-2.0** 许可，与本项目（现同为 **GPL-2.0**）兼容。为尊重其许可，
 本项目**不复制、不内置** `cc_big_http.lua`（仓库目录和 `dist/ncm.tar` 里都没有它），而是由安装脚本
 在安装时从其上游 <https://git.liulikeji.cn/xingluo/cc_big_http> 现场下载到 `/ncm/lib/cc_big_http.lua`。
-再分发者需注意：本仓库自身仍是 MIT 许可，但最终用户的电脑上会额外存在一份 GPL-2.0 的
-`cc_big_http.lua`（由安装脚本获取，**并非本仓库提供**）。
 
 **关于 `cc_speakerlib`**：它是 `ncm/cli` 用来播放本地 `.dfpwm` 的 `speaker` 程序，安装为
 `/ncm/lib/speaker.lua`。它**自身会去同目录查找 `cc_big_http.lua`**（两者同装在 `/ncm/lib/` 下，天然配合）。
@@ -370,7 +369,8 @@ ncm/cli
 它默认带一个远程转码接口（`-server`），但 `ncm/cli` 只让它播放**本地 `.dfpwm` 直通**，
 **不会**触发任何远程转码。
 
-本移植自身以 **MIT** 许可发布，详见 [LICENSE](LICENSE)。
+本移植自身以 **GPL-2.0** 许可发布，详见 [LICENSE](LICENSE)。
+（原为 MIT；因为二维码渲染借鉴了 GPL-2.0 的 GMapiServer，整仓已按 GPL-2.0 发布。）
 
 ---
 
