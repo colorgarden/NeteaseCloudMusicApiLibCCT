@@ -55,3 +55,12 @@ builds on, adapts and/or bundles the following components.
    qr_bimg_utils.py, so one character cell can display six QR modules using
    CC:Tweaked's built-in 0x80-0x9F glyphs. That code is GPL-2.0, so this
    project as a whole is now distributed under GPL-2.0 (see LICENSE).
+
+8. rxi/json.lua  (bundled as ncm/util/json.lua, the JSON encoder/decoder)
+   https://github.com/rxi/json.lua
+   License: MIT, Copyright (c) 2020 rxi
+   Adopted as this project's JSON codec. It never escapes non-ASCII bytes, so
+   UTF-8 (CJK names returned by the NetEase API) passes through untouched. The
+   bundled copy keeps the module's previous public API (json.encode, json.decode,
+   json.null, json.array) and documents its compatibility adaptations in the
+   file header.

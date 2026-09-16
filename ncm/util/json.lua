@@ -1,39 +1,54 @@
--- ncm/util/json.lua - pure-Lua JSON encoder/decoder for CC:Tweaked (Lua 5.2 / Cobalt).
+-- ncm/util/json.lua - JSON encoder/decoder for CC:Tweaked (Lua 5.2 / Cobalt).
 --
--- Usage:
---   local json = require("ncm.util.json")
---   json.encode({ a = 1, list = json.array({ 1, 2 }) })  --> {"a":1,"list":[1,2]}
---   json.decode('{"a":1}')                                --> { a = 1 }
+-- Based on rxi/json.lua v0.1.2 (https://github.com/rxi/json.lua), MIT licence,
+-- Copyright (c) 2020 rxi. rxi's implementation never escapes non-ASCII bytes:
+-- UTF-8 multibyte sequences (CJK song / artist / playlist names returned by the
+-- NetEase API) pass through untouched, which is exactly what CC's terminal
+-- needs. This project (GPL-2.0) bundles it and adapts it below to keep the
+-- public API and JSON semantics that the existing callers rely on.
 --
--- Encoding rules:
---   * strings: escapes '"', '\\' and control bytes < 0x20 (as \u00XX); all
---     other bytes (including UTF-8 multibyte sequences) pass through untouched.
---   * numbers: integer form when integral, otherwise string.format("%.14g").
---   * arrays: a table is treated as a JSON array when it is marked with
---     M.array(...) (a metatable carrying __jsontype = "array"), when it has a
---     raw __jsontype = "array" key, or when it has positive integer keys
---     1..n and no other keys. An empty table defaults to a JSON object {}.
---   * null: encode M.null, or a nil-valued table field would be omitted.
+-- Public API (unchanged from the previous in-house implementation):
+--   json.encode(value)  -> string   (object/array/scalar -> JSON text)
+--   json.decode(text)   -> value    (JSON text -> Lua value; raises on error)
+--   json.null           -> sentinel encoded as `null` and returned for JSON null
+--   json.array(t)       -> t        (marks t so it always encodes as an array)
 --
--- Decoding rules:
---   * JSON objects -> tables keyed by string.
---   * JSON arrays  -> tables with sequential integer keys 1..n.
---   * JSON null    -> M.null sentinel.
---   * Malformed input raises a Lua error (never returns nil silently).
+-- Array vs object rules (kept compatible with the previous encoder):
+--   * A table marked by json.array() - a metatable carrying __jsontype = "array"
+--     - or carrying a raw __jsontype = "array" key always encodes as a JSON
+--     array, so an empty marked table encodes as [].
+--   * Otherwise a table with dense positive integer keys 1..n encodes as an
+--     array; anything else encodes as an object.
+--   * An empty, unmarked table encodes as {} (an object). Upstream rxi emits
+--     [] here; this difference is deliberate and matches the old encoder.
+--   * json.decode() tags decoded arrays with the same marker, so a decoded []
+--     re-encodes as [] instead of {}.
+--
+-- Other deliberate differences from upstream rxi/json.lua:
+--   * `null` decodes to json.null (not to nil), so null object fields survive.
+--   * Integral numbers print in integer form (e.g. 1600000000000), matching the
+--     old encoder; non-integral numbers use string.format("%.14g").
+--   * Decoder errors are prefixed with "json.decode:" and trailing commas in
+--     arrays/objects are rejected (upstream accepts "[1,]").
+--
+-- ASCII-only, no io/os/require and no C modules: safe under Cobalt.
 
-local M = {}
+local json = { _version = "0.1.2" }
+
+-- ---------------------------------------------------------------- public API
+-- [ncm] Compatibility layer: json.null sentinel and json.array() helper.
 
 -- Unique sentinel representing JSON null.
-M.null = setmetatable({}, {
+json.null = setmetatable({}, {
   __tostring = function() return "null" end,
 })
 
 -- Metatable marking a table for array serialization.
 local array_mt = { __jsontype = "array" }
 
--- Mark (or create) a table so that encode() always emits a JSON array, even
--- when the table is empty. Returns the same table.
-function M.array(t)
+-- Mark (or create) a table so encode() always emits a JSON array, even when the
+-- table is empty. Returns the same table.
+function json.array(t)
   if t == nil then t = {} end
   if type(t) ~= "table" then
     error("json.array: expected table, got " .. type(t), 2)
@@ -42,7 +57,7 @@ function M.array(t)
   return t
 end
 
--- True when t should be encoded as a JSON array.
+-- True when t must be serialized as a JSON array (see the rules above).
 local function is_array(t)
   local mt = getmetatable(t)
   if type(mt) == "table" and mt.__jsontype == "array" then return true end
@@ -58,279 +73,350 @@ local function is_array(t)
   return count > 0 and max == count
 end
 
--- Encode a lone Unicode code point as UTF-8 bytes.
-local function utf8_char(cp)
-  if cp < 0x80 then
-    return string.char(cp)
-  elseif cp < 0x800 then
-    return string.char(
-      0xC0 + math.floor(cp / 0x40),
-      0x80 + cp % 0x40
-    )
-  elseif cp < 0x10000 then
-    return string.char(
-      0xE0 + math.floor(cp / 0x1000),
-      0x80 + math.floor(cp / 0x40) % 0x40,
-      0x80 + cp % 0x40
-    )
-  else
-    return string.char(
-      0xF0 + math.floor(cp / 0x40000),
-      0x80 + math.floor(cp / 0x1000) % 0x40,
-      0x80 + math.floor(cp / 0x40) % 0x40,
-      0x80 + cp % 0x40
-    )
-  end
-end
+-------------------------------------------------------------------------------
+-- Encode
+-------------------------------------------------------------------------------
 
---------------------------------------------------------------------------------
--- Decoder
---------------------------------------------------------------------------------
+local encode
 
-local function decode(str)
-  if type(str) ~= "string" then
-    error("json.decode: expected string, got " .. type(str), 2)
-  end
-
-  local pos = 1
-  local len = #str
-
-  local function fail(msg)
-    error(string.format("json.decode: %s at position %d", msg, pos), 2)
-  end
-
-  local function skip_ws()
-    local _, e = str:find("^[ \t\r\n]*", pos)
-    if e then pos = e + 1 end
-  end
-
-  local parse_value
-
-  local function parse_string()
-    -- str:sub(pos, pos) == '"'
-    pos = pos + 1
-    local buf = {}
-    while true do
-      local c = str:sub(pos, pos)
-      if c == "" then fail("unterminated string") end
-      if c == '"' then
-        pos = pos + 1
-        return table.concat(buf)
-      elseif c == "\\" then
-        pos = pos + 1
-        local e = str:sub(pos, pos)
-        if e == '"' then buf[#buf + 1] = '"'
-        elseif e == "\\" then buf[#buf + 1] = "\\"
-        elseif e == "/" then buf[#buf + 1] = "/"
-        elseif e == "b" then buf[#buf + 1] = "\b"
-        elseif e == "f" then buf[#buf + 1] = "\f"
-        elseif e == "n" then buf[#buf + 1] = "\n"
-        elseif e == "r" then buf[#buf + 1] = "\r"
-        elseif e == "t" then buf[#buf + 1] = "\t"
-        elseif e == "u" then
-          local hex = str:sub(pos + 1, pos + 4)
-          if #hex < 4 or hex:find("[^0-9a-fA-F]") then
-            fail("invalid \\u escape")
-          end
-          local cp = tonumber(hex, 16)
-          pos = pos + 4 -- now points at last hex digit
-          -- Surrogate pair: high surrogate followed by \uXXXX low surrogate.
-          if cp >= 0xD800 and cp <= 0xDBFF then
-            if str:sub(pos + 1, pos + 2) == "\\u" then
-              local hex2 = str:sub(pos + 3, pos + 6)
-              if #hex2 == 4 and not hex2:find("[^0-9a-fA-F]") then
-                local lo = tonumber(hex2, 16)
-                if lo >= 0xDC00 and lo <= 0xDFFF then
-                  cp = 0x10000 + (cp - 0xD800) * 0x400 + (lo - 0xDC00)
-                  pos = pos + 6 -- now points at last hex digit of low surrogate
-                end
-              end
-            end
-          end
-          buf[#buf + 1] = utf8_char(cp)
-        else
-          fail("invalid escape sequence \\" .. (e == "" and "<eof>" or e))
-        end
-        pos = pos + 1
-      else
-        if c:byte() < 0x20 then fail("unescaped control character") end
-        buf[#buf + 1] = c
-        pos = pos + 1
-      end
-    end
-  end
-
-  local function parse_number()
-    local s, e = str:find("^-?%d+%.?%d*[eE]?[-+]?%d*", pos)
-    if not s then fail("invalid number") end
-    local token = str:sub(s, e)
-    local n = tonumber(token)
-    if not n then fail("invalid number '" .. token .. "'") end
-    pos = e + 1
-    return n
-  end
-
-  local function expect(word, value)
-    if str:sub(pos, pos + #word - 1) ~= word then
-      fail("expected '" .. word .. "'")
-    end
-    pos = pos + #word
-    return value
-  end
-
-  local function parse_array()
-    pos = pos + 1 -- consume '['
-    local arr = {}
-    skip_ws()
-    if str:sub(pos, pos) == "]" then
-      pos = pos + 1
-      return setmetatable(arr, array_mt)
-    end
-    while true do
-      arr[#arr + 1] = parse_value()
-      skip_ws()
-      local c = str:sub(pos, pos)
-      if c == "," then
-        pos = pos + 1
-      elseif c == "]" then
-        pos = pos + 1
-        return setmetatable(arr, array_mt)
-      else
-        fail("expected ',' or ']' in array")
-      end
-    end
-  end
-
-  local function parse_object()
-    pos = pos + 1 -- consume '{'
-    local obj = {}
-    skip_ws()
-    if str:sub(pos, pos) == "}" then
-      pos = pos + 1
-      return obj
-    end
-    while true do
-      skip_ws()
-      if str:sub(pos, pos) ~= '"' then fail("expected string key") end
-      local key = parse_string()
-      skip_ws()
-      if str:sub(pos, pos) ~= ":" then fail("expected ':'") end
-      pos = pos + 1
-      obj[key] = parse_value()
-      skip_ws()
-      local c = str:sub(pos, pos)
-      if c == "," then
-        pos = pos + 1
-      elseif c == "}" then
-        pos = pos + 1
-        return obj
-      else
-        fail("expected ',' or '}' in object")
-      end
-    end
-  end
-
-  parse_value = function()
-    skip_ws()
-    local c = str:sub(pos, pos)
-    if c == "" then fail("unexpected end of input") end
-    if c == '"' then return parse_string() end
-    if c == "{" then return parse_object() end
-    if c == "[" then return parse_array() end
-    if c == "t" then return expect("true", true) end
-    if c == "f" then return expect("false", false) end
-    if c == "n" then return expect("null", M.null) end
-    if c == "-" or c:match("%d") then return parse_number() end
-    fail("unexpected character '" .. c .. "'")
-  end
-
-  local value = parse_value()
-  skip_ws()
-  if pos <= len then fail("trailing garbage") end
-  return value
-end
-
---------------------------------------------------------------------------------
--- Encoder
---------------------------------------------------------------------------------
-
-local escape_map = {
-  ['"'] = '\\"',
-  ["\\"] = "\\\\",
-  ["\b"] = "\\b",
-  ["\f"] = "\\f",
-  ["\n"] = "\\n",
-  ["\r"] = "\\r",
-  ["\t"] = "\\t",
+local escape_char_map = {
+  [ "\\" ] = "\\",
+  [ "\"" ] = "\"",
+  [ "\b" ] = "b",
+  [ "\f" ] = "f",
+  [ "\n" ] = "n",
+  [ "\r" ] = "r",
+  [ "\t" ] = "t",
 }
 
-local function encode_string(s)
-  local out = s:gsub('[%c\\"]', function(c)
-    local mapped = escape_map[c]
-    if mapped then return mapped end
-    return string.format("\\u%04x", c:byte())
-  end)
-  return '"' .. out .. '"'
+local escape_char_map_inv = { [ "/" ] = "/" }
+for k, v in pairs(escape_char_map) do
+  escape_char_map_inv[v] = k
 end
 
-local function encode_number(n)
-  if n ~= n then error("json.encode: cannot encode NaN", 2) end
-  if n == math.huge or n == -math.huge then
-    error("json.encode: cannot encode infinity", 2)
-  end
-  -- Integral and safely representable as an integer.
-  if n == math.floor(n) and math.abs(n) < 9007199254740992 then
-    return string.format("%d", n)
-  end
-  return string.format("%.14g", n)
+local function escape_char(c)
+  return "\\" .. (escape_char_map[c] or string.format("u%04x", c:byte()))
 end
 
-local function encode_value(v, seen)
-  local tv = type(v)
-  if v == nil then
-    return "null"
-  elseif v == M.null then
-    return "null"
-  elseif tv == "boolean" then
-    return v and "true" or "false"
-  elseif tv == "number" then
-    return encode_number(v)
-  elseif tv == "string" then
-    return encode_string(v)
-  elseif tv == "table" then
-    if seen[v] then
-      error("json.encode: circular reference detected", 2)
+local function encode_nil(val)
+  return "null"
+end
+
+local function encode_table(val, stack)
+  local res = {}
+  stack = stack or {}
+
+  -- Circular reference?
+  if stack[val] then error("json.encode: circular reference detected", 2) end
+  stack[val] = true
+
+  if is_array(val) then
+    for i = 1, #val do
+      res[i] = encode(val[i], stack)
     end
-    seen[v] = true
-    local parts = {}
-    local out
-    if is_array(v) then
-      for i = 1, #v do
-        parts[i] = encode_value(v[i], seen)
-      end
-      out = "[" .. table.concat(parts, ",") .. "]"
-    else
-      for k, val in pairs(v) do
-        if type(k) ~= "string" then
-          error("json.encode: table keys must be strings, got " .. type(k), 2)
+    stack[val] = nil
+    return "[" .. table.concat(res, ",") .. "]"
+  end
+
+  -- Object: only string keys are allowed (matches JSON.stringify semantics).
+  for k, v in pairs(val) do
+    if type(k) ~= "string" then
+      error("json.encode: table keys must be strings, got " .. type(k), 2)
+    end
+    res[#res + 1] = encode(k, stack) .. ":" .. encode(v, stack)
+  end
+  stack[val] = nil
+  return "{" .. table.concat(res, ",") .. "}"
+end
+
+local function encode_string(val)
+  -- Escape only control bytes (0-31), NUL, backslash and quote. Every byte
+  -- >= 0x20, including UTF-8 multibyte sequences, is copied verbatim.
+  return '"' .. val:gsub('[%z\1-\31\\"]', escape_char) .. '"'
+end
+
+local function encode_number(val)
+  -- Check for NaN, -inf and inf.
+  if val ~= val or val <= -math.huge or val >= math.huge then
+    error("json.encode: cannot encode non-finite number '" .. tostring(val) .. "'", 2)
+  end
+  -- [ncm] Integral values keep integer form, as the previous encoder did.
+  if val == math.floor(val) and math.abs(val) < 9007199254740992 then
+    return string.format("%d", val)
+  end
+  return string.format("%.14g", val)
+end
+
+local type_func_map = {
+  [ "nil"     ] = encode_nil,
+  [ "table"   ] = encode_table,
+  [ "string"  ] = encode_string,
+  [ "number"  ] = encode_number,
+  [ "boolean" ] = tostring,
+}
+
+encode = function(val, stack)
+  -- [ncm] The null sentinel is a table, so handle it before type dispatch.
+  if val == json.null then return "null" end
+  local t = type(val)
+  local f = type_func_map[t]
+  if f then
+    return f(val, stack)
+  end
+  error("json.encode: cannot encode value of type '" .. t .. "'", 2)
+end
+
+function json.encode(val)
+  return ( encode(val) )
+end
+
+-------------------------------------------------------------------------------
+-- Decode
+-------------------------------------------------------------------------------
+
+local parse
+
+local function create_set(...)
+  local res = {}
+  for i = 1, select("#", ...) do
+    res[ select(i, ...) ] = true
+  end
+  return res
+end
+
+local space_chars   = create_set(" ", "\t", "\r", "\n")
+local delim_chars   = create_set(" ", "\t", "\r", "\n", "]", "}", ",")
+local escape_chars  = create_set("\\", "/", '"', "b", "f", "n", "r", "t", "u")
+local literals      = create_set("true", "false", "null")
+
+local literal_map = {
+  [ "true"  ] = true,
+  [ "false" ] = false,
+  -- [ncm] JSON null becomes the sentinel so callers can tell it apart from a
+  -- missing key (upstream rxi decodes null to nil).
+  [ "null"  ] = json.null,
+}
+
+local function next_char(str, idx, set, negate)
+  for i = idx, #str do
+    if set[str:sub(i, i)] ~= negate then
+      return i
+    end
+  end
+  return #str + 1
+end
+
+local function decode_error(str, idx, msg)
+  local line_count = 1
+  local col_count = 1
+  for i = 1, idx - 1 do
+    col_count = col_count + 1
+    if str:sub(i, i) == "\n" then
+      line_count = line_count + 1
+      col_count = 1
+    end
+  end
+  error( string.format("json.decode: %s at line %d col %d", msg, line_count, col_count) )
+end
+
+local function codepoint_to_utf8(n)
+  -- http://scripts.sil.org/cms/scripts/page.php?site_id=nrsi&id=iws-appendixa
+  local f = math.floor
+  if n <= 0x7f then
+    return string.char(n)
+  elseif n <= 0x7ff then
+    return string.char(f(n / 64) + 192, n % 64 + 128)
+  elseif n <= 0xffff then
+    return string.char(f(n / 4096) + 224, f(n % 4096 / 64) + 128, n % 64 + 128)
+  elseif n <= 0x10ffff then
+    return string.char(f(n / 262144) + 240, f(n % 262144 / 4096) + 128,
+                       f(n % 4096 / 64) + 128, n % 64 + 128)
+  end
+  error( string.format("json.decode: invalid unicode codepoint '%x'", n) )
+end
+
+local function parse_unicode_escape(s)
+  local n1 = tonumber( s:sub(1, 4),  16 )
+  local n2 = tonumber( s:sub(7, 10), 16 )
+  -- Surrogate pair?
+  if n2 then
+    return codepoint_to_utf8((n1 - 0xd800) * 0x400 + (n2 - 0xdc00) + 0x10000)
+  end
+  return codepoint_to_utf8(n1)
+end
+
+local function parse_string(str, i)
+  local res = ""
+  local j = i + 1
+  local k = j
+
+  while j <= #str do
+    local x = str:byte(j)
+
+    if x < 32 then
+      decode_error(str, j, "control character in string")
+
+    elseif x == 92 then -- `\`: Escape
+      res = res .. str:sub(k, j - 1)
+      j = j + 1
+      local c = str:sub(j, j)
+      if c == "u" then
+        local hex = str:match("^[dD][89aAbB]%x%x\\u%x%x%x%x", j + 1)
+                 or str:match("^%x%x%x%x", j + 1)
+                 or decode_error(str, j - 1, "invalid unicode escape in string")
+        res = res .. parse_unicode_escape(hex)
+        j = j + #hex
+      else
+        if not escape_chars[c] then
+          decode_error(str, j - 1, "invalid escape char '" .. c .. "' in string")
         end
-        parts[#parts + 1] = encode_string(k) .. ":" .. encode_value(val, seen)
+        res = res .. escape_char_map_inv[c]
       end
-      out = "{" .. table.concat(parts, ",") .. "}"
+      k = j + 1
+
+    elseif x == 34 then -- `"`: End of string
+      res = res .. str:sub(k, j - 1)
+      return res, j + 1
     end
-    seen[v] = nil
-    return out
-  else
-    error("json.encode: cannot encode value of type " .. tv, 2)
+
+    j = j + 1
   end
+
+  decode_error(str, i, "expected closing quote for string")
 end
 
-function M.encode(value)
-  return encode_value(value, {})
+local function parse_number(str, i)
+  local x = next_char(str, i, delim_chars)
+  local s = str:sub(i, x - 1)
+  local n = tonumber(s)
+  if not n then
+    decode_error(str, i, "invalid number '" .. s .. "'")
+  end
+  return n, x
 end
 
-function M.decode(text)
-  return decode(text)
+local function parse_literal(str, i)
+  local x = next_char(str, i, delim_chars)
+  local word = str:sub(i, x - 1)
+  if not literals[word] then
+    decode_error(str, i, "invalid literal '" .. word .. "'")
+  end
+  return literal_map[word], x
 end
 
-return M
+local function parse_array(str, i)
+  local res = {}
+  local n = 1
+  i = i + 1
+  while 1 do
+    local x
+    i = next_char(str, i, space_chars, true)
+    -- Empty array / end of array?
+    if str:sub(i, i) == "]" then
+      -- [ncm] Reject a trailing comma ("[1,]"): `]` is only valid before any
+      -- element has been read.
+      if n > 1 then
+        decode_error(str, i, "unexpected ']' in array")
+      end
+      i = i + 1
+      break
+    end
+    -- Read token
+    x, i = parse(str, i)
+    res[n] = x
+    n = n + 1
+    -- Next token
+    i = next_char(str, i, space_chars, true)
+    local chr = str:sub(i, i)
+    i = i + 1
+    if chr == "]" then break end
+    if chr ~= "," then decode_error(str, i, "expected ']' or ','") end
+  end
+  -- [ncm] Tag decoded arrays so an empty one re-encodes as [] (not {}).
+  return setmetatable(res, array_mt), i
+end
+
+local function parse_object(str, i)
+  local res = {}
+  local n = 1
+  i = i + 1
+  while 1 do
+    local key, val
+    i = next_char(str, i, space_chars, true)
+    -- Empty object / end of object?
+    if str:sub(i, i) == "}" then
+      -- [ncm] Reject a trailing comma ("{... ,}").
+      if n > 1 then
+        decode_error(str, i, "unexpected '}' in object")
+      end
+      i = i + 1
+      break
+    end
+    -- Read key
+    if str:sub(i, i) ~= '"' then
+      decode_error(str, i, "expected string for key")
+    end
+    key, i = parse(str, i)
+    -- Read ':' delimiter
+    i = next_char(str, i, space_chars, true)
+    if str:sub(i, i) ~= ":" then
+      decode_error(str, i, "expected ':' after key")
+    end
+    i = next_char(str, i + 1, space_chars, true)
+    -- Read value
+    val, i = parse(str, i)
+    -- Set
+    res[key] = val
+    n = n + 1
+    -- Next token
+    i = next_char(str, i, space_chars, true)
+    local chr = str:sub(i, i)
+    i = i + 1
+    if chr == "}" then break end
+    if chr ~= "," then decode_error(str, i, "expected '}' or ','") end
+  end
+  return res, i
+end
+
+local char_func_map = {
+  [ '"' ] = parse_string,
+  [ "0" ] = parse_number,
+  [ "1" ] = parse_number,
+  [ "2" ] = parse_number,
+  [ "3" ] = parse_number,
+  [ "4" ] = parse_number,
+  [ "5" ] = parse_number,
+  [ "6" ] = parse_number,
+  [ "7" ] = parse_number,
+  [ "8" ] = parse_number,
+  [ "9" ] = parse_number,
+  [ "-" ] = parse_number,
+  [ "t" ] = parse_literal,
+  [ "f" ] = parse_literal,
+  [ "n" ] = parse_literal,
+  [ "[" ] = parse_array,
+  [ "{" ] = parse_object,
+}
+
+parse = function(str, idx)
+  local chr = str:sub(idx, idx)
+  local f = char_func_map[chr]
+  if f then
+    return f(str, idx)
+  end
+  decode_error(str, idx, "unexpected character '" .. chr .. "'")
+end
+
+function json.decode(str)
+  if type(str) ~= "string" then
+    error("json.decode: expected argument of type string, got " .. type(str), 2)
+  end
+  local res, idx = parse(str, next_char(str, 1, space_chars, true))
+  idx = next_char(str, idx, space_chars, true)
+  if idx <= #str then
+    decode_error(str, idx, "trailing garbage")
+  end
+  return res
+end
+
+return json
