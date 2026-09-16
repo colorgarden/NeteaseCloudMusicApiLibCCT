@@ -193,10 +193,202 @@ function M.playFlacFile(path, opts)
   return res
 end
 
+-- Open a FLAC source (HTTP(S) URL or local path) as a chunk reader.
+local function openSource(source, opts)
+  local readSize = opts.downloadChunk or 64 * 1024
+  if type(source) == "string" and source:match("^https?://") then
+    if not http then return nil, nil, "http API unavailable" end
+    local h, err = httpx.get(source, nil, true)
+    if not h then return nil, nil, err end
+    return function() return h.read(readSize) end,
+      function() h.close() end,
+      nil
+  end
+  local f = fs.open(source, "rb")
+  if not f then return nil, nil, "cannot open " .. tostring(source) end
+  return function() return f.read(readSize) end,
+    function() pcall(function() f.close() end) end,
+    nil
+end
+
+-- Decode a whole FLAC into an in-memory DFPWM stream. Local only: no remote
+-- service is involved anywhere.
+--
+-- This is the way to get smooth playback WITHOUT changing the server's CPU
+-- budget: streaming decode has to produce each second of audio within that same
+-- second, which a pure-Lua FLAC decoder cannot do on a computer that only gets
+-- a few milliseconds per tick. Decoding the whole song first has no deadline,
+-- and DFPWM playback afterwards costs almost nothing (1 bit per sample).
+--
+-- Returns the DFPWM string and the sample count, or nil, err.
+function M.flacToDfpwm(source, opts)
+  opts = opts or {}
+  local getChunk, closeSource, openErr = openSource(source, opts)
+  if not getChunk then return nil, openErr end
+
+  local parts, nparts, total = {}, 0, 0
+  local ok, result = pcall(function()
+    local dec = flac.newStream(getChunk)
+    local resample = newResampler(dec.sampleRate, dec.channels)
+    local encode = dfpwm.make_encoder()
+    while true do
+      local frame = dec.nextFrame()
+      if not frame then break end
+      local n = #frame[1]
+      local samples = resample(frame, n)
+      -- The encoder carries state, so appending its output keeps the DFPWM
+      -- bitstream continuous.
+      nparts = nparts + 1
+      parts[nparts] = encode(to8bit(samples))
+      total = total + #samples
+      if opts.onProgress then opts.onProgress(total, dec) end
+      sleep(0)
+    end
+    return total
+  end)
+  closeSource()
+
+  if not ok then return nil, result end
+  return table.concat(parts), result
+end
+
+-- Play an in-memory DFPWM stream through the speaker. DFPWM is 1 bit/sample,
+-- so this needs essentially no CPU compared with decoding FLAC.
+function M.playDfpwmData(data, opts)
+  opts = opts or {}
+  local speaker = resolveSpeaker(opts.speaker)
+  if not speaker then return nil, "no speaker attached" end
+
+  local chunkSize = opts.chunkSize or 16 * 1024
+  local decode = dfpwm.make_decoder()
+  local total, pos = 0, 1
+  while pos <= #data do
+    local chunk = data:sub(pos, pos + chunkSize - 1)
+    pos = pos + #chunk
+    local buffer = decode(chunk)
+    play(speaker, buffer, opts.volume)
+    total = total + #buffer
+    if opts.onProgress then opts.onProgress(total) end
+    sleep(0)
+  end
+  return total
+end
+
+-- Streaming decode with a decode-ahead reserve: decode about `prebuffer`
+-- seconds first, start playing, then keep decoding ahead while it plays.
+--
+-- Why it helps: CC gives a computer its CPU in bursts (a few milliseconds per
+-- tick), so a decoder that is only marginally short of real time stutters. A
+-- reserve absorbs that jitter and lets a burst build up a cushion, so playback
+-- can stay continuous.
+--
+-- Why it is not magic: if the decoder is consistently slower than real time
+-- (fewer than 1.0 audio-seconds decoded per real second), the reserve still
+-- drains and the stalls come back - just later. In that case use
+-- playFlacBuffered / flacToDfpwm, which have no deadline at all.
+--
+-- Memory stays bounded: fully consumed chunks are released, so only the reserve
+-- window is held, not the whole song.
+--
+-- Returns the number of samples played, or nil, err.
+function M.playFlacPrebuffered(source, opts)
+  opts = opts or {}
+  local speaker = resolveSpeaker(opts.speaker)
+  if not speaker then return nil, "no speaker attached" end
+  local getChunk, closeSource, openErr = openSource(source, opts)
+  if not getChunk then return nil, openErr end
+
+  local target = (opts.prebuffer or 10) * OUT_RATE
+  local sendBytes = opts.chunkSize or 16 * 1024
+
+  local parts, nparts = {}, 0
+  local pi, poff = 1, 1 -- playhead into `parts`
+  local buffered = 0    -- samples decoded but not yet played
+  local eof = false
+
+  local ok, res = pcall(function()
+    local dec = flac.newStream(getChunk)
+    local resample = newResampler(dec.sampleRate, dec.channels)
+    local encode = dfpwm.make_encoder()
+    local decode = dfpwm.make_decoder()
+
+    local function pump()
+      local frame = dec.nextFrame()
+      if not frame then eof = true return end
+      local samples = resample(frame, #frame[1])
+      nparts = nparts + 1
+      parts[nparts] = encode(to8bit(samples))
+      buffered = buffered + #samples
+    end
+
+    -- Pull up to n DFPWM bytes off the reserve, releasing spent chunks.
+    local function take(n)
+      local out, got = {}, 0
+      while got < n do
+        local part = parts[pi]
+        if not part then break end
+        local piece = part:sub(poff, poff + (n - got) - 1)
+        if piece == "" then break end
+        out[#out + 1] = piece
+        poff = poff + #piece
+        got = got + #piece
+        buffered = buffered - #piece * 8
+        if poff > #part then
+          parts[pi] = nil
+          pi = pi + 1
+          poff = 1
+        end
+      end
+      return table.concat(out)
+    end
+
+    -- Build the reserve before making any sound.
+    while not eof and buffered < target do
+      pump()
+      sleep(0)
+    end
+    if opts.onBuffered then opts.onBuffered(buffered) end
+
+    local played = 0
+    while true do
+      while not eof and buffered < target do
+        pump()
+        sleep(0)
+      end
+      local chunk = take(sendBytes)
+      if chunk == "" then break end
+      local buffer = decode(chunk)
+      play(speaker, buffer, opts.volume)
+      played = played + #buffer
+      if opts.onProgress then opts.onProgress(played, buffered) end
+      sleep(0)
+    end
+    return played
+  end)
+  closeSource()
+
+  if not ok then return nil, res end
+  return res
+end
+
+-- Local decode + smooth playback in one call: decode the whole FLAC to DFPWM in
+-- memory, then play it. No remote service, no config change.
+-- Returns the number of samples played, or nil, err.
+function M.playFlacBuffered(source, opts)
+  opts = opts or {}
+  local speaker = resolveSpeaker(opts.speaker)
+  if not speaker then return nil, "no speaker attached" end
+
+  local data, samplesOrErr = M.flacToDfpwm(source, opts)
+  if not data then return nil, samplesOrErr end
+
+  if opts.onDecoded then opts.onDecoded(samplesOrErr) end
+  opts.speaker = speaker
+  return M.playDfpwmData(data, opts)
+end
+
 -- Decode a whole FLAC (HTTP(S) URL or local path) into a .dfpwm file at
--- 48 kHz mono. Playing the result costs no decoding at all, so this is how to
--- get smooth audio on a computer whose per-tick CPU budget cannot decode FLAC
--- in real time.
+-- 48 kHz mono, for playback without decoding.
 --
 -- It is also the decoder-only test: convert once, then listen. If the
 -- converted file plays smoothly but streaming did not, the decoder is fine and
@@ -206,22 +398,8 @@ end
 -- Returns the number of samples written, or nil, err.
 function M.decodeToDfpwm(source, dest, opts)
   opts = opts or {}
-
-  local getChunk, closeSource
-  local readSize = opts.downloadChunk or 64 * 1024
-
-  if type(source) == "string" and source:match("^https?://") then
-    if not http then return nil, "http API unavailable" end
-    local h, err = httpx.get(source, nil, true)
-    if not h then return nil, err end
-    getChunk = function() return h.read(readSize) end
-    closeSource = function() h.close() end
-  else
-    local f = fs.open(source, "rb")
-    if not f then return nil, "cannot open " .. tostring(source) end
-    getChunk = function() return f.read(readSize) end
-    closeSource = function() pcall(function() f.close() end) end
-  end
+  local getChunk, closeSource, openErr = openSource(source, opts)
+  if not getChunk then return nil, openErr end
 
   local ok, result = pcall(function()
     local dec = flac.newStream(getChunk)
@@ -234,8 +412,6 @@ function M.decodeToDfpwm(source, dest, opts)
       if not frame then break end
       local n = #frame[1]
       local samples = resample(frame, n)
-      -- The encoder carries state, so writing its output incrementally keeps
-      -- the DFPWM bitstream continuous.
       out.write(encode(to8bit(samples)))
       written = written + #samples
       if opts.onProgress then opts.onProgress(written, dec) end

@@ -172,8 +172,22 @@ local function playSong(id, displayName)
   end
 
   local audio = require("ncm.util.audio")
-  print("Streaming and decoding FLAC locally (Ctrl+T to stop)...")
-  local samples, err = audio.playFlacUrl(url, { volume = 1.0, speaker = speaker })
+  local prebuffer = 10
+  print(("Decoding %d s ahead, then playing while it keeps decoding..."):format(prebuffer))
+  local samples, err = audio.playFlacPrebuffered(url, {
+    volume = 1.0,
+    speaker = speaker,
+    prebuffer = prebuffer,
+    onBuffered = function(buffered)
+      term.clearLine()
+      term.write(("  buffered %.0f s - starting playback"):format(buffered / 48000))
+    end,
+    onProgress = function(played, buffered)
+      term.clearLine()
+      term.write(("  played %.0f s, %.0f s ahead"):format(played / 48000, buffered / 48000))
+    end,
+  })
+  print("")
   if not samples then
     print("Playback failed: " .. tostring(err))
   else
