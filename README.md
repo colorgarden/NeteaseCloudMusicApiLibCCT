@@ -240,6 +240,49 @@ audio.playFile("song.dfpwm", { volume = 1.0 })                   -- 本地文件
 
 ---
 
+## 命令行客户端 / CLI
+
+仓库自带一个开箱即用的命令行客户端 `ncm/cli.lua`（安装后位于 `/ncm/cli.lua`）。
+在 CC 电脑的 shell 里运行：
+
+```
+ncm/cli
+```
+
+启动时会自动读取 `/ncm_cookie` 里的登录 cookie；没有则提示先登录。菜单为英文
+（CC 默认字体没有中文字形），功能：
+
+| 菜单项 | 说明 |
+|---|---|
+| `Login (QR code)` | 申请二维码 key、生成二维码并**直接画到终端**（half 半块模式，适配默认 51×19 终端），轮询扫码状态（800 过期 / 801 待扫 / 802 已扫 / 803 成功）；成功后把 cookie（`MUSIC_U=...; __csrf=...`）写入 `/ncm_cookie`。 |
+| `Search & Play` | 输入关键字，调用 `ncm.search({ type = 1, limit = 10 })`，列出序号 / 歌名 / 歌手，输入序号播放。 |
+| `Play by ID` | 直接输入歌曲 ID 播放。 |
+| `Play a .dfpwm` | 播放本地路径或 URL 的 `.dfpwm` 文件（只接受 `.dfpwm`）。 |
+| `Show account` | 用已保存的 cookie 调用 `ncm.user_account` 显示昵称 / 用户 ID。 |
+| `Logout` | 调用 `ncm.logout` 并删除本地 cookie 文件。 |
+| `Quit` | 退出并恢复终端（清屏、光标归位）。 |
+
+播放策略（**不做任何远程转码**）：
+
+- **纯 CC 流式解码 FLAC（主用）**：`Search & Play` / `Play by ID` 用
+  `ncm.song_url_v1({ level = "lossless" })` 取直链。若返回 `.flac`，客户端用
+  `ncm.util.audio.playFlacUrl` 边下载边解码边播放（CPU 占用较高，建议高级电脑）。
+  若返回的不是 FLAC（账号没有无损 / VIP 权限时通常是 mp3），终端会明确提示
+  纯 CC 无法解码 mp3，并引导改用 DFPWM 方案。
+- **DFPWM（可选）**：`Play a .dfpwm` 只接受 `.dfpwm` 目标。若目标是以
+  `http(s)://` 开头的 URL 且系统里存在 `speaker` 程序，则调用
+  `speaker <url> -id ncm_cli`（speakerlib 直接播放 DFPWM，不触发转码）；
+  否则用内置解码器 `ncm.util.audio.playUrl` / `playFile` 本地播放。
+  **绝不会把非 `.dfpwm` 的链接交给 `speaker`，也绝不使用任何远程转码服务
+  （不使用 `-server`）。**
+
+> 想听 mp3 歌曲：在 PC 上用 `tools/audio_to_dfpwm.sh "<歌曲直链>" song.dfpwm`
+> 预转成 DFPWM，托管到 HTTP 后再用 `Play a .dfpwm` 播放。
+
+> Ctrl+T 可随时终止；客户端用 `pcall` 捕获并恢复终端。
+
+---
+
 ## 接口一览
 
 全部 377 个接口 = `ncm/module/` 下的文件，调用方式为 **`ncm.<文件名>({ 参数 })`**，参数名与原版一致。
@@ -295,6 +338,7 @@ audio.playFile("song.dfpwm", { volume = 1.0 })                   -- 本地文件
 ncm/
   init.lua             -- require("ncm") 入口，聚合全部 module
   manifest.lua         -- 模块清单
+  cli.lua              -- 命令行客户端（ncm/cli：二维码登录 + 搜索 + 播放）
   module/              -- 377 个接口模块
   util/
     crypto.lua         -- weapi / eapi / linuxapi 加解密
