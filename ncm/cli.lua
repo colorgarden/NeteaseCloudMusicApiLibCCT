@@ -142,7 +142,7 @@ local function drawProgress(label, value, total, detail)
   if label == lastLabel and now - lastDraw < 500 then return end
   lastDraw, lastLabel = now, label
 
-  local w = term.getSize()
+  local w, h = term.getSize()
   local pct = 0
   if total and total > 0 then
     pct = math.floor(value / total * 100 + 0.5)
@@ -153,9 +153,16 @@ local function drawProgress(label, value, total, detail)
   local barWidth = w - #label - #suffix - #tail - 3 -- the "[]" and a space
   if barWidth < 8 then barWidth = 8 end
   local filled = math.floor(barWidth * pct / 100 + 0.5)
+  local text = label .. "[" .. string.rep("#", filled)
+    .. string.rep("-", barWidth - filled) .. "]" .. suffix .. tail
+
+  -- Pin the bar to the last row and never write its final cell: a write at the
+  -- bottom-right corner makes the terminal wrap and scroll, which scrolled the
+  -- freshly drawn bar off screen (it only appeared to "flash").
+  if #text > w - 1 then text = text:sub(1, w - 1) end
+  term.setCursorPos(1, h)
   term.clearLine()
-  term.write(label .. "[" .. string.rep("#", filled)
-    .. string.rep("-", barWidth - filled) .. "]" .. suffix .. tail)
+  term.write(text)
 end
 
 -- Fetch a lossless URL for `id` and play it: FLAC is decoded locally by the
