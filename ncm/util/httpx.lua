@@ -68,9 +68,24 @@ do
 end
 
 -- Delegate to cc_big_http.get, forwarding all arguments and the third return
--- value (`fail`) unchanged.
+-- value (`fail`) unchanged. Transport failures are retried: NetEase's edge
+-- occasionally refuses a connection, and one bad attempt should not kill a
+-- whole song. A response with a non-2xx status is a real answer and is returned
+-- as-is (cc_big_http reports those through `nil, err` too, so only retry a
+-- couple of times).
+local GET_ATTEMPTS = 3
+
 function M.get(...)
-  return bigHttp.get(...)
+  local lastErr, lastFail
+  for attempt = 1, GET_ATTEMPTS do
+    local res, err, fail = bigHttp.get(...)
+    if res then return res end
+    lastErr, lastFail = err, fail
+    if attempt < GET_ATTEMPTS and type(sleep) == "function" then
+      sleep(attempt) -- 1s, then 2s
+    end
+  end
+  return nil, lastErr, lastFail
 end
 
 return M

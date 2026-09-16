@@ -311,10 +311,25 @@ function M.request(uri, data, options)
     error(answer, 2)
   end
 
-  local response, err = httpApi.post({ url = url, body = body, headers = headers, binary = true })
+  -- Retry transient transport failures: NetEase's edge occasionally refuses or
+  -- drops a connection, and one bad packet should not abort an API call. Only
+  -- the "no response at all" case is retried - an HTTP error status is a real
+  -- answer and is handled below.
+  local attempts = 3
+  local response, err
+  for attempt = 1, attempts do
+    response, err = httpApi.post({ url = url, body = body, headers = headers, binary = true })
+    if response then break end
+    if attempt < attempts and type(sleep) == "function" then
+      sleep(attempt) -- 1s, then 2s
+    end
+  end
   if not response then
     answer.status = 502
-    answer.body = { code = 502, msg = err or "request failed" }
+    answer.body = {
+      code = 502,
+      msg = (err or "request failed") .. " (after " .. attempts .. " attempts)",
+    }
     error(answer, 2)
   end
 
