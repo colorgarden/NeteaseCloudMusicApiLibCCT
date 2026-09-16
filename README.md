@@ -1,6 +1,6 @@
 # ncm — 网易云音乐 API for CC:Tweaked
 
-把 [NeteaseCloudMusicApi](https://github.com/Binaryify/NeteaseCloudMusicApi)（Node.js 版，377 个接口）
+把 [NeteaseCloudMusicApi](https://github.com/Binaryify/NeteaseCloudMusicApi)（[npm](https://www.npmjs.com/package/neteasecloudmusicapi)，Node.js 版，377 个接口）
 **完整移植为 CC:Tweaked（ComputerCraft: Tweaked）的纯 Lua 库**。
 
 在游戏里的高级电脑上 `require("ncm")` 就能搜索、听歌、登录、拿歌单/歌词/评论……再用 CC 自带的
@@ -328,7 +328,7 @@ ncm/cli
 | [cc_speakerlib](https://git.liulikeji.cn/xingluo/cc_speakerlib) | `speaker` 播放程序（DFPWM 播放 / 远程转码） | **MPL-2.0**（文件头 SPDX 声明；上游无 LICENSE 文件） | 安装脚本自动下载为 `/ncm/lib/speaker.lua`，**不随本仓库分发** |
 | [GMapiServer](https://git.liulikeji.cn/xingluo/GMapiServer) | 二维码 3×2 子像素打包算法（`qr_bimg_utils.py`） | **GPL-2.0** | 已**改写**进 `ncm/util/qrcode.lua`（整仓因此改为 GPL-2.0） |
 | [LibDeflate](https://github.com/SafeteeWoW/LibDeflate) | gzip 解压 | zlib | 已内置 `ncm/util/libdeflate.lua` |
-| [NeteaseCloudMusicApi](https://github.com/Binaryify/NeteaseCloudMusicApi) | 原始 Node 实现 | MIT | 本移植的上游 |
+| [NeteaseCloudMusicApi](https://github.com/Binaryify/NeteaseCloudMusicApi)（[npm](https://www.npmjs.com/package/neteasecloudmusicapi)） | 原始 Node 实现 | MIT | 本移植的上游（对齐 4.32.0） |
 
 **关于 `cc_big_http`（请务必阅读）**：它是本库的**硬运行时依赖**——库运行时的对外 GET 都经由
 `ncm/util/httpx.lua` 交给它，用 HTTP `Range` 分块下载来绕过 `http_max_download`（默认 16 MiB）
