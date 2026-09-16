@@ -89,7 +89,7 @@ local lastDraw = 0
 local samples, err = audio.decodeToDfpwm(src, out, {
   onProgress = function(total, dec)
     local now = os.epoch("utc")
-    if now - lastDraw < 250 then return end -- keep terminal writes out of the loop
+    if now - lastDraw < 500 then return end -- keep terminal writes out of the loop
     lastDraw = now
     term.clearLine()
     term.write(("  %d samples = %.1f s of audio (source %d Hz, %d ch)")

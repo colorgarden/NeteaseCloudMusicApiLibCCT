@@ -131,7 +131,17 @@ end
 
 -- ASCII progress bar: "Download [####------]  40%  31.20 MB". Pure ASCII so it
 -- renders on the CC font, and clamped to the terminal width.
+--
+-- Redrawing the screen is not free on a CC terminal, and the callbacks fire on
+-- every downloaded chunk / decoded frame, so throttle to one redraw per 500 ms.
+-- The first redraw of a new label always goes through, so each phase appears
+-- immediately.
+local lastDraw, lastLabel = 0, nil
 local function drawProgress(label, value, total, detail)
+  local now = os.epoch("utc")
+  if label == lastLabel and now - lastDraw < 500 then return end
+  lastDraw, lastLabel = now, label
+
   local w = term.getSize()
   local pct = 0
   if total and total > 0 then
