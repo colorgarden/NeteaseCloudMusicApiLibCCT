@@ -6,8 +6,8 @@
     1. removes any previous install (ncm/, plus the root-level dependency
        files written by older versions of this installer),
     2. downloads cc_big_http (the library's runtime dependency for large GETs),
-    3. streams dist/ncm.tar off the internet straight into the filesystem
-       (uncompressed USTAR - no gzip library or temp file needed),
+    3. downloads dist/ncm.tar fully into memory, measures what it needs, then
+       extracts it (uncompressed USTAR - no gzip library or temp file needed),
     4. downloads the aeslua-cc dependency,
     5. downloads cc_speakerlib, the speaker program `ncm/cli` uses for .dfpwm passthrough and
        mp3/aac remote transcoding,
@@ -224,49 +224,88 @@ local function fetchDep(url, dest, what)
   return #body
 end
 
-local function readN(handle, n)
-  local out, got = {}, 0
-  while got < n do
-    local chunk = handle.read(n - got)
+-- Read the whole (small, single-response) body into one Lua string.
+--
+-- CC:Tweaked already buffers the HTTP response, and its readAll() blocks until
+-- the body is complete, so this is cheap. It is also what lets the installer
+-- measure the archive before writing any of it: the body never touches disk
+-- until the extractor runs. The read loop is a fallback for builds whose
+-- readAll() is missing or returns nothing.
+local function readBody(handle)
+  if handle.readAll then
+    local whole = handle.readAll()
+    if whole and #whole > 0 then return whole end
+  end
+  local out = {}
+  while true do
+    local chunk = handle.read and handle.read(8192) or nil
     if not chunk or #chunk == 0 then break end
     out[#out + 1] = chunk
-    got = got + #chunk
   end
-  return table.concat(out), got
+  return table.concat(out)
 end
 
--- Stream a (uncompressed) USTAR archive from an HTTP handle into `root`.
-local function untar(handle, root)
-  local count = 0
-  while true do
-    local hdr, n = readN(handle, 512)
-    if n < 512 then break end
-    local name = hdr:sub(1, 100):match("^[^%z]*") or ""
-    if name == "" then break end -- end-of-archive
-    local sizeStr = (hdr:sub(125, 136):match("^[^%z]*") or "0"):gsub("%s", "")
-    local size = tonumber(sizeStr, 8) or 0
-    local typeflag = hdr:sub(157, 157)
-    local prefix = hdr:sub(346, 500):match("^[^%z]*") or ""
-    local full = prefix ~= "" and (prefix .. "/" .. name) or name
-    local dest = root .. full
+-- CC:Tweaked charges every file its contents plus the length of its path (and a
+-- little metadata), which the USTAR size fields do not include. This is a
+-- per-entry allowance for that bookkeeping, NOT a size threshold: the byte
+-- total itself is measured from the archive by measureTar(), never guessed.
+local PER_ENTRY_OVERHEAD = 64
 
+-- Decode the USTAR header fields the walks below need. A header is 512 bytes:
+--   name     bytes   0.. 99
+--   size     bytes 124..135  (11 octal digits followed by a NUL)
+--   typeflag byte  156
+--   prefix   bytes 345..499
+-- All offsets above are 0-based; the sub() indices here are 1-based.
+local function tarHeader(hdr)
+  local name = hdr:sub(1, 100):match("^[^%z]*") or ""
+  local size = tonumber((hdr:sub(125, 136):match("^[^%z]*") or "0"):gsub("%s", ""), 8) or 0
+  local typeflag = hdr:sub(157, 157)
+  local prefix = hdr:sub(346, 500):match("^[^%z]*") or ""
+  local full = prefix ~= "" and (prefix .. "/" .. name) or name
+  return name, full, size, typeflag
+end
+
+-- Pass 1: measure an in-memory USTAR archive without writing anything.
+--
+-- USTAR stores each entry as a fixed 512-byte header block followed by its data
+-- rounded up to a 512-byte boundary. This walks those blocks and sums the
+-- declared sizes; the 512-byte headers and padding are skipped (they are the
+-- container, not the payload). Every entry is counted too - including
+-- directories - so the caller can add PER_ENTRY_OVERHEAD per entry.
+local function measureTar(body)
+  local total, entries, pos = 0, 0, 1
+  while pos + 511 <= #body do
+    local hdr = body:sub(pos, pos + 511)
+    local name, _, size = tarHeader(hdr)
+    if name == "" then break end -- end-of-archive marker
+    total = total + size
+    entries = entries + 1
+    pos = pos + 512 + math.ceil(size / 512) * 512
+  end
+  return total, entries
+end
+
+-- Pass 2: extract an in-memory USTAR archive under `root`. This is the same
+-- walk measureTar() uses, and it runs only after the free-space check passes,
+-- so nothing is written before the check.
+local function extractTar(body, root)
+  local count, pos = 0, 1
+  while pos + 511 <= #body do
+    local hdr = body:sub(pos, pos + 511)
+    local name, full, size, typeflag = tarHeader(hdr)
+    if name == "" then break end -- end-of-archive marker
+    pos = pos + 512
     if typeflag == "5" then
-      mkdirp(dest:gsub("/+$", ""))
+      mkdirp((root .. full):gsub("/+$", ""))
     else
-      mkdirp(dirname(dest))
-      local f = assert(fs.open(dest, "wb"))
-      local remaining = size
-      while remaining > 0 do
-        local chunk = readN(handle, math.min(remaining, 8192))
-        if #chunk == 0 then break end
-        f.write(chunk)
-        remaining = remaining - #chunk
-      end
+      mkdirp(dirname(root .. full))
+      local f = assert(fs.open(root .. full, "wb"))
+      f.write(body:sub(pos, pos + size - 1))
       f.close()
-      local pad = (512 - (size % 512)) % 512
-      if pad > 0 then readN(handle, pad) end
       count = count + 1
     end
+    pos = pos + math.ceil(size / 512) * 512
   end
   return count
 end
@@ -332,28 +371,35 @@ for i = 1, #bundleSources do
   if not handle then
     log("  download failed: %s", tostring(err))
   else
-    -- CC:Tweaked caps a computer's internal disk at `computer_space_limit`
-    -- (config/computercraft-server.toml, default 1,000,000 bytes). The library
-    -- is ~440 KB of Lua across 400 files plus ~80 KB of dependencies, and CC
-    -- also charges for each file's path, so the default is too tight. Check
-    -- first: "Out of space" from deep inside the extractor is impossible to
-    -- act on, this message is not.
+    -- Buffer the whole archive in memory first (CC already has it buffered), so
+    -- we can measure exactly what it needs. Nothing is written to disk yet.
+    local body = readBody(handle)
+    handle.close()
+
+    -- Reserve room for the archive that was just downloaded, before writing a
+    -- single byte. A magic byte count would go stale as soon as the bundle
+    -- changed; the size is measured from the archive itself. "Out of space"
+    -- from deep inside the extractor is impossible to act on, this is not.
+    local totalBytes, entries = measureTar(body)
+    local needed = totalBytes + entries * PER_ENTRY_OVERHEAD
+    log("  archive: %d entries, %d bytes (needs about %d with per-file overhead)",
+      entries, totalBytes, needed)
+
     if fs.getFreeSpace then
       local free = fs.getFreeSpace(root)
       log("  free space: %d bytes", free)
-      if free < 600000 then
+      if free < needed then
         die(string.format(
-          "not enough disk space: %d bytes free, about 560000 needed.\n"
+          "not enough disk space: %d bytes free, this archive needs about %d bytes (%d entries).\n"
             .. "  A stale /ncm is removed automatically, so free space by deleting\n"
             .. "  other files, or raise computer_space_limit in\n"
             .. "  config/computercraft-server.toml (then restart the world) and retry.",
-          free))
+          free, needed, entries))
       end
     end
 
     log("Extracting ...")
-    local files = untar(handle, root)
-    handle.close()
+    local files = extractTar(body, root)
     log("  extracted %d files", files)
 
     if bundleIsCurrent() then
