@@ -315,11 +315,31 @@ function M.request(uri, data, options)
   -- drops a connection, and one bad packet should not abort an API call. Only
   -- the "no response at all" case is retried - an HTTP error status is a real
   -- answer and is handled below.
+  -- Retry transient transport failures. A response handle can also arrive
+  -- already unusable: the server may close the connection mid-body, and CC
+  -- then hands back a handle whose readAll raises "attempt to use a closed
+  -- file". That is just as transient as a missing response, so the body is
+  -- read inside the retry loop and a read failure retries instead of dying.
   local attempts = 3
-  local response, err, failResponse
+  local response, err, failResponse, raw, code, respHeaders
   for attempt = 1, attempts do
     response, err, failResponse = httpApi.post({ url = url, body = body, headers = headers, binary = true })
-    if response then break end
+
+    if response then
+      local okRead, res = pcall(response.readAll)
+      if okRead and type(res) == "string" then
+        raw = res
+        code = response.getResponseCode()
+        respHeaders = response.getResponseHeaders() or {}
+        pcall(response.close)
+        break
+      end
+      -- Unusable handle: remember why, close it, and fall through to a retry.
+      err = tostring(res)
+      pcall(response.close)
+      response = nil
+    end
+
     if attempt < attempts and type(sleep) == "function" then
       sleep(attempt) -- 1s, then 2s
     end
@@ -332,38 +352,6 @@ function M.request(uri, data, options)
     }
     error(answer, 2)
   end
-
-  -- The response must be a CC handle. When it is not (some servers/edge cases
-  -- make http.post return a response-shaped object, or the call failed with a
-  -- status), a bare readAll() would only say "attempt to call method 'readAll'".
-  -- Report the status and the server's own message instead.
-  if type(response) ~= "table" and type(response) ~= "userdata" then
-    local detail = "type=" .. type(response)
-    if failResponse ~= nil then detail = detail .. ", failing response present" end
-    answer.status = 502
-    answer.body = { code = 502, msg = "http.post returned a non-response (" .. detail .. "): " .. tostring(err) }
-    error(answer, 2)
-  end
-  if type(response.readAll) ~= "function" then
-    local code = "?"
-    if type(response.getResponseCode) == "function" then
-      local okCode, c = pcall(response.getResponseCode)
-      if okCode and c ~= nil then code = tostring(c) end
-    end
-    local text = ""
-    if type(response.read) == "function" then
-      local okBody, chunk = pcall(response.read)
-      if okBody and type(chunk) == "string" then text = chunk:sub(1, 200) end
-    end
-    answer.status = 502
-    answer.body = { code = 502, msg = "http.post response has no readAll (status " .. code .. ")" .. (text ~= "" and (": " .. text) or "") }
-    error(answer, 2)
-  end
-  local raw = response.readAll()
-  local code = response.getResponseCode()
-  local respHeaders = response.getResponseHeaders() or {}
-  response.close()
-
   local setCookie = nil
   for k, v in pairs(respHeaders) do
     if type(k) == "string" and k:lower() == "set-cookie" then
