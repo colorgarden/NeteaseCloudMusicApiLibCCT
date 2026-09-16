@@ -21,7 +21,7 @@ local src = args[1]
 local out = args[2] or "/decode_test.dfpwm"
 
 if not src then
-  print("usage: verify_decode <flac-url-or-local-path> [out.dfpwm]")
+  print("usage: verify_decode <song-id | flac-url | local .flac path> [out.dfpwm]")
   return
 end
 
@@ -29,6 +29,43 @@ local okReq, audio = pcall(require, "ncm.util.audio")
 if not okReq then
   print("cannot load ncm.util.audio: " .. tostring(audio))
   return
+end
+
+-- Accept a plain song id too, so this is self-contained: resolve it to a
+-- lossless (FLAC) direct link, reusing the cookie ncm/cli saved at /ncm_cookie.
+if tonumber(src) then
+  local okNcm, ncm = pcall(require, "ncm")
+  if not okNcm then
+    print("cannot load ncm: " .. tostring(ncm))
+    return
+  end
+  local cookie
+  if fs.exists("/ncm_cookie") then
+    local cf = fs.open("/ncm_cookie", "r")
+    cookie = cf.readAll()
+    cf.close()
+  end
+  print("Resolving song " .. src .. " at level=lossless ...")
+  local okUrl, res = pcall(ncm.song_url_v1, {
+    id = tonumber(src),
+    level = "lossless",
+    cookie = cookie,
+  })
+  if not okUrl then
+    print("song_url_v1 failed: " .. textutils.serialize(res))
+    return
+  end
+  local d = res.body and res.body.data and res.body.data[1]
+  if not d or not d.url then
+    print("No URL returned: " .. textutils.serialize(res.body))
+    return
+  end
+  print(("  type=%s level=%s size=%s"):format(
+    tostring(d.type), tostring(d.level), tostring(d.size)))
+  if tostring(d.type) ~= "flac" then
+    print("  WARNING: not a FLAC stream; the pure-Lua decoder cannot play this.")
+  end
+  src = d.url
 end
 
 print("Decoding")
