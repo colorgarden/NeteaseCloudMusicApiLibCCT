@@ -193,6 +193,63 @@ function M.playFlacFile(path, opts)
   return res
 end
 
+-- Decode a whole FLAC (HTTP(S) URL or local path) into a .dfpwm file at
+-- 48 kHz mono. Playing the result costs no decoding at all, so this is how to
+-- get smooth audio on a computer whose per-tick CPU budget cannot decode FLAC
+-- in real time.
+--
+-- It is also the decoder-only test: convert once, then listen. If the
+-- converted file plays smoothly but streaming did not, the decoder is fine and
+-- the machine was simply too slow to keep up. If the converted file is *also*
+-- choppy, the decode itself is at fault.
+--
+-- Returns the number of samples written, or nil, err.
+function M.decodeToDfpwm(source, dest, opts)
+  opts = opts or {}
+
+  local getChunk, closeSource
+  local readSize = opts.downloadChunk or 64 * 1024
+
+  if type(source) == "string" and source:match("^https?://") then
+    if not http then return nil, "http API unavailable" end
+    local h, err = httpx.get(source, nil, true)
+    if not h then return nil, err end
+    getChunk = function() return h.read(readSize) end
+    closeSource = function() h.close() end
+  else
+    local f = fs.open(source, "rb")
+    if not f then return nil, "cannot open " .. tostring(source) end
+    getChunk = function() return f.read(readSize) end
+    closeSource = function() pcall(function() f.close() end) end
+  end
+
+  local ok, result = pcall(function()
+    local dec = flac.newStream(getChunk)
+    local resample = newResampler(dec.sampleRate, dec.channels)
+    local encode = dfpwm.make_encoder()
+    local out = assert(fs.open(dest, "wb"))
+    local written = 0
+    while true do
+      local frame = dec.nextFrame()
+      if not frame then break end
+      local n = #frame[1]
+      local samples = resample(frame, n)
+      -- The encoder carries state, so writing its output incrementally keeps
+      -- the DFPWM bitstream continuous.
+      out.write(encode(to8bit(samples)))
+      written = written + #samples
+      if opts.onProgress then opts.onProgress(written, dec) end
+      sleep(0)
+    end
+    out.close()
+    return written
+  end)
+  closeSource()
+
+  if not ok then return nil, result end
+  return result
+end
+
 -- Play a table of raw samples (-128..127) directly.
 function M.playPcm(samples, opts)
   opts = opts or {}
