@@ -24,26 +24,82 @@ local base64 = require("ncm.util.base64")
 local M = {}
 
 -- ============================================================================
--- QR Code tables (error-correction level M only)
+-- QR Code tables (all error-correction levels)
 -- ============================================================================
 
 local MODE_BYTE = 4
 
--- Number of error-correction codewords per block, indexed by version 1..40.
+-- EC level -> 2-bit format indicator (ISO/IEC 18004): L=01 M=00 Q=11 H=10
+local EC_LEVELS = { L = { bits = 1 }, M = { bits = 0 }, Q = { bits = 3 }, H = { bits = 2 } }
+local DEFAULT_ECL = "M"
+
+-- Error-correction codewords PER BLOCK, [level][version 1..40].
 local ECC_CODEWORDS = {
-  10, 16, 26, 18, 24, 16, 18, 22, 22, 26,
-  30, 22, 22, 24, 24, 28, 28, 26, 26, 26,
-  26, 28, 28, 28, 28, 28, 28, 28, 28, 28,
-  28, 28, 28, 28, 28, 28, 28, 28, 28, 28,
+  L = {
+    7, 10, 15, 20, 26, 18, 20, 24, 30, 18,
+    20, 24, 26, 30, 22, 24, 28, 30, 28, 28,
+    28, 28, 30, 30, 26, 28, 30, 30, 30, 30,
+    30, 30, 30, 30, 30, 30, 30, 30, 30, 30,
+  },
+  M = {
+    10, 16, 26, 18, 24, 16, 18, 22, 22, 26,
+    30, 22, 22, 24, 24, 28, 28, 26, 26, 26,
+    26, 28, 28, 28, 28, 28, 28, 28, 28, 28,
+    28, 28, 28, 28, 28, 28, 28, 28, 28, 28,
+  },
+  Q = {
+    13, 22, 18, 26, 18, 24, 18, 22, 20, 24,
+    28, 26, 24, 20, 30, 24, 28, 28, 26, 30,
+    28, 30, 30, 30, 30, 28, 30, 30, 30, 30,
+    30, 30, 30, 30, 30, 30, 30, 30, 30, 30,
+  },
+  H = {
+    17, 28, 22, 16, 22, 28, 26, 26, 24, 28,
+    24, 28, 22, 24, 24, 30, 28, 28, 26, 28,
+    30, 24, 30, 30, 30, 30, 30, 30, 30, 30,
+    30, 30, 30, 30, 30, 30, 30, 30, 30, 30,
+  },
 }
 
--- Number of error-correction blocks, indexed by version 1..40.
+-- Number of blocks, [level][version 1..40].
 local NUM_BLOCKS = {
-  1, 1, 1, 2, 2, 4, 4, 4, 5, 5,
-  5, 8, 9, 9, 10, 10, 11, 13, 14, 16,
-  17, 17, 18, 20, 21, 23, 25, 26, 28, 29,
-  31, 33, 35, 37, 38, 40, 43, 45, 47, 49,
+  L = {
+    1, 1, 1, 1, 1, 2, 2, 2, 2, 4,
+    4, 4, 4, 4, 6, 6, 6, 6, 7, 8,
+    8, 9, 9, 10, 12, 12, 12, 13, 14, 15,
+    16, 17, 18, 19, 19, 20, 21, 22, 24, 25,
+  },
+  M = {
+    1, 1, 1, 2, 2, 4, 4, 4, 5, 5,
+    5, 8, 9, 9, 10, 10, 11, 13, 14, 16,
+    17, 17, 18, 20, 21, 23, 25, 26, 28, 29,
+    31, 33, 35, 37, 38, 40, 43, 45, 47, 49,
+  },
+  Q = {
+    1, 1, 2, 2, 4, 4, 6, 6, 8, 8,
+    8, 10, 12, 16, 12, 17, 16, 18, 21, 20,
+    23, 23, 25, 27, 29, 34, 34, 35, 38, 40,
+    43, 45, 48, 51, 53, 56, 59, 62, 65, 68,
+  },
+  H = {
+    1, 1, 2, 4, 4, 4, 5, 6, 8, 8,
+    11, 11, 16, 16, 18, 16, 19, 21, 25, 25,
+    25, 34, 30, 32, 35, 37, 40, 42, 45, 48,
+    51, 54, 57, 60, 63, 66, 70, 74, 77, 81,
+  },
 }
+
+-- Accepts "L"/"M"/"Q"/"H" (string) or an options table with
+-- ecl / errorCorrectionLevel / level.
+local function normalizeEcl(ecl)
+  if type(ecl) == "table" then
+    ecl = ecl.ecl or ecl.errorCorrectionLevel or ecl.level
+  end
+  if type(ecl) ~= "string" then return DEFAULT_ECL end
+  ecl = ecl:upper()
+  if not EC_LEVELS[ecl] then return DEFAULT_ECL end
+  return ecl
+end
 
 -- Penalty weights N1..N4 from the specification.
 local PENALTY_N1, PENALTY_N2, PENALTY_N3, PENALTY_N4 = 3, 3, 40, 10
@@ -107,10 +163,10 @@ local function numRawDataModules(ver)
   return result
 end
 
--- Number of data codewords for a version at ECC level M.
-local function numDataCodewords(ver)
+-- Number of data codewords for a version at the given ECC level.
+local function numDataCodewords(ver, ecl)
   local raw = math.floor(numRawDataModules(ver) / 8)
-  return raw - ECC_CODEWORDS[ver] * NUM_BLOCKS[ver]
+  return raw - ECC_CODEWORDS[ecl][ver] * NUM_BLOCKS[ecl][ver]
 end
 
 -- Character-count indicator width for byte mode.
@@ -148,7 +204,7 @@ local function getBit(x, i)
   return bit32.band(bit32.rshift(x, i), 1) ~= 0
 end
 
-local function newQr(ver)
+local function newQr(ver, eclBits)
   local size = ver * 4 + 17
   local modules, isFunction = {}, {}
   for y = 0, size - 1 do
@@ -160,7 +216,7 @@ local function newQr(ver)
     modules[y] = mr
     isFunction[y] = fr
   end
-  return { version = ver, size = size, modules = modules, isFunction = isFunction }
+  return { version = ver, size = size, modules = modules, isFunction = isFunction, eclBits = eclBits or 0 }
 end
 
 local function setFunc(qr, x, y, dark)
@@ -190,8 +246,7 @@ local function drawAlignmentPattern(qr, x, y)
 end
 
 local function drawFormatBits(qr, mask)
-  -- ECC level M has format data bits 00.
-  local data = mask
+  local data = (qr.eclBits or 0) * 8 + mask
   local rem = data
   for _ = 1, 10 do
     rem = bit32.bxor(bit32.lshift(rem, 1), bit32.rshift(rem, 9) * 0x537)
@@ -415,8 +470,8 @@ end
 -- Data encoding
 -- ============================================================================
 
-local function encodeDataCodewords(text, ver)
-  local capacityBits = numDataCodewords(ver) * 8
+local function encodeDataCodewords(text, ver, ecl)
+  local capacityBits = numDataCodewords(ver, ecl) * 8
   local bits = {}
   local function append(value, length)
     for i = length - 1, 0, -1 do
@@ -448,9 +503,9 @@ local function encodeDataCodewords(text, ver)
 end
 
 -- Split into blocks, append Reed-Solomon ECC, then interleave.
-local function addEccAndInterleave(data, ver)
-  local numBlocks = NUM_BLOCKS[ver]
-  local blockEccLen = ECC_CODEWORDS[ver]
+local function addEccAndInterleave(data, ver, ecl)
+  local numBlocks = NUM_BLOCKS[ecl][ver]
+  local blockEccLen = ECC_CODEWORDS[ecl][ver]
   local rawCodewords = math.floor(numRawDataModules(ver) / 8)
   local numShortBlocks = numBlocks - (rawCodewords % numBlocks)
   local shortBlockDataLen = math.floor(rawCodewords / numBlocks) - blockEccLen
@@ -486,20 +541,21 @@ end
 -- Top-level QR construction
 -- ============================================================================
 
-local function encodeMatrix(text)
+local function encodeMatrix(text, ecl)
   text = text or ""
+  ecl = normalizeEcl(ecl)
   local ver
   for v = 1, 40 do
     local need = 4 + charCountBits(v) + 8 * #text
-    if need <= numDataCodewords(v) * 8 then
+    if need <= numDataCodewords(v, ecl) * 8 then
       ver = v
       break
     end
   end
   if not ver then error("qrcode: input too long (" .. #text .. " bytes)", 3) end
 
-  local codewords = addEccAndInterleave(encodeDataCodewords(text, ver), ver)
-  local qr = newQr(ver)
+  local codewords = addEccAndInterleave(encodeDataCodewords(text, ver, ecl), ver, ecl)
+  local qr = newQr(ver, EC_LEVELS[ecl].bits)
   drawFunctionPatterns(qr)
   drawCodewords(qr, codewords)
 
@@ -628,15 +684,17 @@ end
 -- ============================================================================
 
 -- Encode `text` and return a standard PNG data URL.
-function M.toDataURL(text)
-  local qr = encodeMatrix(text)
+-- opts = "L"/"M"/"Q"/"H" or { ecl = ..., errorCorrectionLevel = ..., level = ... }.
+function M.toDataURL(text, opts)
+  local qr = encodeMatrix(text, opts)
   local png = encodePNG(qr, 4, 4) -- scale 4 px/module, 4-module quiet zone
   return "data:image/png;base64," .. base64.encode(png)
 end
 
 -- Raw module matrix: { version = v, size = n, modules[y+1][x+1] = boolean(dark) }.
-function M.encode(text)
-  return encodeMatrix(text)
+-- opts = "L"/"M"/"Q"/"H" or an options table (see toDataURL).
+function M.encode(text, opts)
+  return encodeMatrix(text, opts)
 end
 
 -- Pad the matrix with a quiet zone (border modules of light).
@@ -662,6 +720,15 @@ local ASCII_STYLES = {
   ascii = { dark = "#", light = " " },                        -- pure ASCII
 }
 
+-- UTF-8 encode a 3-byte code point (used for the Braille block U+2800..U+28FF).
+local function u3(cp)
+  return string.char(
+    0xE0 + math.floor(cp / 4096),
+    0x80 + math.floor(cp / 64) % 64,
+    0x80 + cp % 64
+  )
+end
+
 -- Render `text` as an array of terminal lines.
 --
 -- opts:
@@ -669,11 +736,12 @@ local ASCII_STYLES = {
 --           | "compact" ("█"/" ", 1 cell/module)
 --           | "ascii"   ("#"/" ", 1 cell/module, pure ASCII)
 --           | "half"    ("█"/"▀"/"▄"/" ", two module rows per line)
+--           | "braille" (2x4 modules per Unicode Braille char, densest)
 --   border  = quiet-zone width in modules (default 2)
 --   invert  = swap dark/light (default false)
 function M.toLines(text, opts)
   opts = opts or {}
-  local qr = encodeMatrix(text)
+  local qr = encodeMatrix(text, opts)
   local border = opts.border == nil and 2 or opts.border
   local style = opts.style or "text"
   local invert = opts.invert and true or false
@@ -686,7 +754,34 @@ function M.toLines(text, opts)
   end
 
   local lines = {}
-  if style == "half" then
+  if style == "braille" then
+    -- Unicode Braille packs a 2x4 block of modules into one character
+    -- (U+2800 + dot bits). Highest terminal density; needs a font that has the
+    -- Braille Patterns block (e.g. a suitable CC resource pack).
+    local nw = n + (n % 2)                    -- pad width to even
+    local nh = n + ((4 - (n % 4)) % 4)        -- pad height to a multiple of 4
+    local function dark(x, y)
+      if x >= n or y >= n then return false end
+      return darkAt(x, y)
+    end
+    for cy = 0, math.floor(nh / 4) - 1 do
+      local out = {}
+      for cx = 0, math.floor(nw / 2) - 1 do
+        local bx, by = cx * 2, cy * 4
+        local bits = 0
+        if dark(bx, by) then bits = bits + 0x01 end
+        if dark(bx, by + 1) then bits = bits + 0x02 end
+        if dark(bx, by + 2) then bits = bits + 0x04 end
+        if dark(bx + 1, by) then bits = bits + 0x08 end
+        if dark(bx + 1, by + 1) then bits = bits + 0x10 end
+        if dark(bx + 1, by + 2) then bits = bits + 0x20 end
+        if dark(bx, by + 3) then bits = bits + 0x40 end
+        if dark(bx + 1, by + 3) then bits = bits + 0x80 end
+        out[#out + 1] = u3(0x2800 + bits)
+      end
+      lines[#lines + 1] = table.concat(out)
+    end
+  elseif style == "half" then
     local UPPER, LOWER, FULL, EMPTY = "\226\150\128", "\226\150\132", "\226\150\136", " "
     local y = 0
     while y < n do
@@ -732,7 +827,7 @@ function M.draw(text, opts)
     return M.printASCII(text, opts)
   end
 
-  local qr = encodeMatrix(text)
+  local qr = encodeMatrix(text, opts)
   local border = opts.border == nil and 2 or opts.border
   local invert = opts.invert and true or false
   local scale = opts.scale == 2 and 2 or 1

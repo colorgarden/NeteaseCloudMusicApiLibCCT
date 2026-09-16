@@ -169,6 +169,11 @@ qr.encode(text)               -- 模块矩阵 { version, size, modules[y][x]=dar
 qr.toLines(text, opts)        -- 返回多行字符串（自行排版）
 qr.printASCII(text, opts)     -- 直接打印到终端
 qr.draw(text, opts)           -- 用终端背景色绘制（CC 上最可靠）
+
+-- 纠错等级 L/M/Q/H（默认 M，等级越高越抗损但码更大）
+qr.toDataURL(text, "H")                       -- 字符串简写
+qr.encode(text, { ecl = "Q" })                -- 也可用 errorCorrectionLevel / level
+qr.toLines(text, { style = "braille", ecl = "H" })
 ```
 
 `opts.style`：
@@ -179,8 +184,59 @@ qr.draw(text, opts)           -- 用终端背景色绘制（CC 上最可靠）
 | `compact` | 每模块 1 格 `█`/空格 | N | N |
 | `ascii` | `#`/空格（纯 ASCII） | N | N |
 | `half` | 半块 `█▀▄`，两行模块压一行 | N | ⌈N/2⌉ |
+| `braille` | Unicode 盲文，2×4 模块压 1 格（**密度最高**） | ⌈N/2⌉ | ⌈N/4⌉ |
 
 其它选项：`border`（静默区，默认 2）、`invert`（反色）。
+
+> `braille` 密度最高，但要**终端字体包含 Unicode 盲文块**（U+2800–U+28FF）才能正常显示；
+> 普通 CC 字体可能没有该字形。不确定时用 `half` 或 `compact`。
+
+---
+
+## 播放音乐(扬声器)
+
+CC 的扬声器 `speaker.playAudio` 只接受 **8-bit PCM(振幅 −128..127,48kHz)**,而且 CC **无法解码
+mp3/aac**。有两种可行方案:
+
+### 方案 A:纯 CC,流式解码 FLAC(内置,无外部工具)
+
+`ncm.util.audio` 内置了一个**纯 Lua 流式 FLAC 解码器**(`ncm.util.flac`):FLAC 是逐帧的,可以
+**边下载边解码边播放**,内存恒定。已与 ffmpeg 对拍,16/24-bit 解码**逐字节一致**。
+
+前提:直链是 **FLAC**(用 `level = "lossless"`,需要 VIP/无损权限):
+
+```lua
+local ncm   = require("ncm")
+local audio = require("ncm.util.audio")
+
+local url = ncm.song_url_v1({ id = 186016, level = "lossless" }).body.data[1].url
+audio.playFlacUrl(url, { volume = 1.0 })            -- 网络流式
+-- audio.playFlacFile("song.flac", { volume = 1.0 })  -- 本地文件
+```
+
+> 纯 Lua 解码很吃 CPU,普通电脑上**可能达不到实时**(会卡顿);建议高级电脑 / 单声道 / 低采样率,
+> 或改用方案 B。32-bit FLAC 不支持(实际文件都是 16/24-bit)。
+
+### 方案 B:PC 预转 DFPWM(最省 CPU)
+
+只有 mp3 直链、或想省 CPU 时:在 PC 上用 ffmpeg 转成 **DFPWM**(1 bit/样本,约 6KB/s),托管后
+CC 直接播放(内置 `cc.audio.dfpwm` 解码,几乎不吃 CPU)。
+
+```bash
+pkg install ffmpeg nodejs-lts
+tools/audio_to_dfpwm.sh "<歌曲直链>" song.dfpwm     # 任意格式 -> DFPWM
+```
+
+```lua
+local audio = require("ncm.util.audio")
+audio.playUrl("http://your-host/song.dfpwm", { volume = 1.0 })   -- 网络
+audio.playFile("song.dfpwm", { volume = 1.0 })                   -- 本地文件
+```
+
+在线转换器:<https://music.madefor.cc/>
+
+> 原理:PC 端 ffmpeg 解码并重采样为 mono/48kHz 8-bit PCM,再用 `tools/dfpwm_encode.js`
+> (与 CC 解码器一致的算法)编码;CC 端流式下载播放。
 
 ---
 
@@ -270,4 +326,4 @@ node tools/build_dist.js
 
 ## License
 
-MIT — 见 [LICENSE](LICENSE)。
+本项目以 **MIT** 许可发布，见 [LICENSE](LICENSE)；第三方组件与署名见 [NOTICE](NOTICE)。

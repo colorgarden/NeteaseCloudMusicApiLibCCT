@@ -1,6 +1,6 @@
 MIT License
 
-Copyright (c) 2026 colorgarden (CC:Tweaked Lua port)
+Copyright (c) 2026 colorgarden
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -19,20 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
---------------------------------------------------------------------------
-Third-party notices
-
-This project is a Lua port of NeteaseCloudMusicApi
-  https://github.com/Binaryify/NeteaseCloudMusicApi
-  MIT License, Copyright (c) 2013-2022 Binaryify
-The ported modules under ncm/module/ are derived from that project.
-
-ncm/util/libdeflate.lua bundles LibDeflate
-  https://github.com/SafeteeWoW/LibDeflate
-  zlib License, Copyright (c) 2018-2021 Haoqian He
-
-The AES implementation is provided at runtime by aeslua-cc
-  https://github.com/AngusAU293/aeslua-cc
-  GNU Lesser General Public License (downloaded separately by install.lua and
-  not distributed in this repository).

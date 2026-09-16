@@ -1,0 +1,24 @@
+Third-party notices
+
+This project (MIT) builds on and/or bundles the following components.
+
+1. NeteaseCloudMusicApi  (the original Node.js implementation this is a port of)
+   https://github.com/Binaryify/NeteaseCloudMusicApi
+   License: MIT, Copyright (c) 2013-2022 Binaryify
+   The modules under ncm/module/ are derived from that project.
+
+2. LibDeflate  (bundled as ncm/util/libdeflate.lua, used for gzip)
+   https://github.com/SafeteeWoW/LibDeflate
+   License: zlib, Copyright (c) 2018-2021 Haoqian He
+
+3. AUKit  (ncm/util/flac.lua adapts its FLAC decoding algorithm)
+   https://github.com/MCJack123/AUKit
+   License: MIT, Copyright (c) 2021-2022 JackMacWindows
+   which in turn ports Project Nayuki's "Simple FLAC implementation"
+   https://www.nayuki.io/page/simple-flac-implementation
+   License: MIT, Copyright (c) 2017 Project Nayuki
+
+4. aeslua-cc  (AES block primitives, downloaded at install time)
+   https://github.com/AngusAU293/aeslua-cc
+   License: GNU Lesser General Public License (LGPL)
+   NOT distributed in this repository; install.lua fetches it from upstream.
