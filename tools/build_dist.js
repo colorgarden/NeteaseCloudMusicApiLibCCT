@@ -65,6 +65,17 @@ fs.mkdirSync(OUT, { recursive: true })
 const files = []
 walk(SRC, 'ncm', files)
 
+// Stamp the build so an installed copy can prove how old it is. Injected here
+// instead of living in the repo, so it never shows up as a dirty working file.
+// install.lua prints it and uses ncm/lib.lua as the "is this bundle current?"
+// marker when it has to detect a stale mirror.
+files.push({
+  rel: 'ncm/BUILD',
+  data: Buffer.from(`built ${new Date().toISOString()}\nfiles ${files.length}\n`, 'utf8'),
+  mode: 0o644,
+  mtime: Math.floor(Date.now() / 1000),
+})
+
 const chunks = []
 for (const f of files) {
   chunks.push(header(f.rel, f.data.length, f.mtime, f.mode))

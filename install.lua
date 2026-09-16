@@ -336,18 +336,61 @@ rmrf(root .. "speaker.lua")
 mkdirp(libDir)
 local big = loadBigHttp(libDir .. "cc_big_http.lua")
 
--- 3. download + extract the library (chunked GET via cc_big_http)
-log("Downloading library bundle ...")
-local handle, err = bigGet(big, CONFIG.base .. "/dist/ncm.tar")
-if not handle then
-  log("  chunked GET failed (%s); using a plain GET instead", tostring(err))
-  handle, err = plainGet(CONFIG.base .. "/dist/ncm.tar")
+-- 3. download + extract the library. Mirrors can serve a *stale*
+-- dist/ncm.tar: jsDelivr caches each file of an @main URL separately, so it is
+-- possible to get a fresh install.lua together with an old bundle. A stale
+-- bundle extracts "successfully" but lacks ncm/lib.lua and the newest fixes,
+-- so verify what actually landed and fall through to the next mirror when it
+-- is stale.
+local function bundleIsCurrent()
+  return fs.exists(root .. "ncm/lib.lua")
 end
-if not handle then die("cannot download ncm.tar: " .. tostring(err)) end
-log("Extracting ...")
-local files = untar(handle, root)
-handle.close()
-log("  installed %d files into %sncm/", files, root)
+
+local bundleSources = { CONFIG.base }
+for _, m in ipairs(MIRRORS) do
+  if m.lib ~= CONFIG.base then bundleSources[#bundleSources + 1] = m.lib end
+end
+
+local extracted = false
+for i = 1, #bundleSources do
+  local base = bundleSources[i]
+  log("Downloading library bundle (%d/%d) ...", i, #bundleSources)
+  log("  %s/dist/ncm.tar", base)
+
+  local handle, err = bigGet(big, base .. "/dist/ncm.tar")
+  if not handle then
+    log("  chunked GET failed (%s); using a plain GET instead", tostring(err))
+    handle, err = plainGet(base .. "/dist/ncm.tar")
+  end
+
+  if not handle then
+    log("  download failed: %s", tostring(err))
+  else
+    log("Extracting ...")
+    local files = untar(handle, root)
+    handle.close()
+    log("  extracted %d files", files)
+
+    if bundleIsCurrent() then
+      extracted = true
+      if fs.exists(root .. "ncm/BUILD") then
+        local bf = fs.open(root .. "ncm/BUILD", "r")
+        if bf then
+          log("  bundle build: %s", (bf.readAll():gsub("%s+$", "")))
+          bf.close()
+        end
+      end
+      if i > 1 then
+        log("  note: the first source served a stale bundle; a later mirror was used")
+      end
+      break
+    end
+    log("  that bundle is stale (no ncm/lib.lua); trying another mirror ...")
+  end
+end
+if not extracted then
+  die("could not obtain a current library bundle from any mirror")
+end
 
 -- 4. download the aeslua-cc dependency (also via cc_big_http)
 log("Downloading dependency (aeslua-cc) ...")
