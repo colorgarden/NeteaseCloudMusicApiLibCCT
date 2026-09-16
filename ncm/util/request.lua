@@ -316,9 +316,9 @@ function M.request(uri, data, options)
   -- the "no response at all" case is retried - an HTTP error status is a real
   -- answer and is handled below.
   local attempts = 3
-  local response, err
+  local response, err, failResponse
   for attempt = 1, attempts do
-    response, err = httpApi.post({ url = url, body = body, headers = headers, binary = true })
+    response, err, failResponse = httpApi.post({ url = url, body = body, headers = headers, binary = true })
     if response then break end
     if attempt < attempts and type(sleep) == "function" then
       sleep(attempt) -- 1s, then 2s
@@ -333,6 +333,32 @@ function M.request(uri, data, options)
     error(answer, 2)
   end
 
+  -- The response must be a CC handle. When it is not (some servers/edge cases
+  -- make http.post return a response-shaped object, or the call failed with a
+  -- status), a bare readAll() would only say "attempt to call method 'readAll'".
+  -- Report the status and the server's own message instead.
+  if type(response) ~= "table" and type(response) ~= "userdata" then
+    local detail = "type=" .. type(response)
+    if failResponse ~= nil then detail = detail .. ", failing response present" end
+    answer.status = 502
+    answer.body = { code = 502, msg = "http.post returned a non-response (" .. detail .. "): " .. tostring(err) }
+    error(answer, 2)
+  end
+  if type(response.readAll) ~= "function" then
+    local code = "?"
+    if type(response.getResponseCode) == "function" then
+      local okCode, c = pcall(response.getResponseCode)
+      if okCode and c ~= nil then code = tostring(c) end
+    end
+    local text = ""
+    if type(response.read) == "function" then
+      local okBody, chunk = pcall(response.read)
+      if okBody and type(chunk) == "string" then text = chunk:sub(1, 200) end
+    end
+    answer.status = 502
+    answer.body = { code = 502, msg = "http.post response has no readAll (status " .. code .. ")" .. (text ~= "" and (": " .. text) or "") }
+    error(answer, 2)
+  end
   local raw = response.readAll()
   local code = response.getResponseCode()
   local respHeaders = response.getResponseHeaders() or {}
