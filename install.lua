@@ -341,11 +341,12 @@ for i = 1, #bundleSources do
     if fs.getFreeSpace then
       local free = fs.getFreeSpace(root)
       log("  free space: %d bytes", free)
-      if free < 800000 then
+      if free < 600000 then
         die(string.format(
-          "not enough disk space: %d bytes free, about 800000 needed.\n"
-            .. "  Raise computer_space_limit in config/computercraft-server.toml\n"
-            .. "  (for example 5000000), restart the world, then run this again.",
+          "not enough disk space: %d bytes free, about 560000 needed.\n"
+            .. "  A stale /ncm is removed automatically, so free space by deleting\n"
+            .. "  other files, or raise computer_space_limit in\n"
+            .. "  config/computercraft-server.toml (then restart the world) and retry.",
           free))
       end
     end
