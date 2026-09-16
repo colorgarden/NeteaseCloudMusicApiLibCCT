@@ -129,61 +129,11 @@ local function launchSpeakerProgram(url, note)
   return true
 end
 
--- ASCII progress bar: "Download [####------]  40%  31.20 MB". Pure ASCII so it
--- renders on the CC font, and clamped to the terminal width.
---
--- Redrawing the screen is not free on a CC terminal, and the callbacks fire on
--- every downloaded chunk / decoded frame, so throttle to one redraw per 500 ms.
--- The first redraw of a new label always goes through, so each phase appears
--- immediately.
-local lastDraw, lastLabel, progressRow = 0, nil, nil
-local function drawProgress(label, value, total, detail)
-  local now = os.epoch("utc")
-  if label == lastLabel and now - lastDraw < 500 then return end
-  if label ~= lastLabel then
-    -- A new phase takes over the row the cursor is on now (the line just
-    -- below its header) and keeps drawing there, so phases cannot overlap.
-    progressRow = select(2, term.getCursorPos())
-    lastLabel = label
-    lastDraw = 0
-  end
-  lastDraw = now
-
-  local w, h = term.getSize()
-  local pct = 0
-  if total and total > 0 then
-    pct = math.floor(value / total * 100 + 0.5)
-    if pct > 100 then pct = 100 end
-  end
-  local suffix = (" %3d%%"):format(pct)
-  local tail = detail and ("  " .. detail) or ""
-  local barWidth = w - #label - #suffix - #tail - 3 -- the "[]" and a space
-  if barWidth < 8 then barWidth = 8 end
-  local filled = math.floor(barWidth * pct / 100 + 0.5)
-  local text = label .. "[" .. string.rep("#", filled)
-    .. string.rep("-", barWidth - filled) .. "]" .. suffix .. tail
-
-  -- Pin the bar to the last row and never write its final cell: a write at the
-  -- bottom-right corner makes the terminal wrap and scroll, which scrolled the
-  -- freshly drawn bar off screen (it only appeared to "flash").
-  if #text > w - 1 then text = text:sub(1, w - 1) end
-  term.setCursorPos(1, progressRow)
-  term.clearLine()
-  term.write(text)
-end
-
--- Move below the finished bar so following output does not land on it.
-local function finishProgress()
-  if progressRow then
-    local _, h = term.getSize()
-    term.setCursorPos(1, math.min(progressRow + 1, h))
-  end
-  progressRow, lastLabel = nil, nil
-end
-
--- Fetch a lossless URL for `id` and play it: FLAC is decoded locally by the
--- pure-Lua decoder, anything else is handed to the speaker program, which can
--- have it transcoded to DFPWM remotely.
+-- Resolve a URL for `id` (lossless when the account allows it) and play it
+-- through the speaker program, which has the remote transcode service turn it
+-- into DFPWM. That keeps CPU use near zero, so playback is smooth; the local
+-- pure-Lua FLAC decoder stays available as an API (see audio.lua and
+-- examples/verify_decode.lua).
 local function playSong(id, displayName)
   clearScreen()
   if displayName then print("Song: " .. tostring(displayName)) end
