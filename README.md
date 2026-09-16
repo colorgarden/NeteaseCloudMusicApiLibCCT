@@ -219,7 +219,7 @@ qr.printCC("https://music.163.com/login?codekey=...", { border = 1 })
 CC 的扬声器 `speaker.playAudio` 只接受 **8-bit PCM(振幅 −128..127,48kHz)**,而且 CC **无法解码
 mp3/aac**。有两种可行方案:
 
-### 方案 B:交给 speakerlib,用远程转码服务器(最省 CPU)
+### 方案 A:交给 speakerlib,用远程转码服务器(最省 CPU)
 
 仓库里的 `ncm/lib/speaker.lua`（**cc_speakerlib**）自带一个 `-server` 远程转码接口，默认
 `http://newgmapi.liulikeji.cn/api/ffmpeg`：把任意音频 URL（**mp3 / aac / flac 都行**）发给它，
@@ -235,7 +235,7 @@ mp3/aac**。有两种可行方案:
 speaker "https://.../song.mp3" -id my_music
 ```
 
-### 方案 A:纯 CC,流式解码 FLAC(内置,无外部工具)
+### 方案 B:纯 CC,本地流式解码 FLAC(内置,无外部工具)
 
 
 `ncm.util.audio` 内置了一个**纯 Lua 流式 FLAC 解码器**(`ncm.util.flac`):FLAC 是逐帧的,可以
