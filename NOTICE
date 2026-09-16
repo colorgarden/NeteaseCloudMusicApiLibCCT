@@ -22,3 +22,14 @@ This project (MIT) builds on and/or bundles the following components.
    https://github.com/AngusAU293/aeslua-cc
    License: GNU Lesser General Public License (LGPL)
    NOT distributed in this repository; install.lua fetches it from upstream.
+
+5. cc_big_http  (chunked GET helper; HARD runtime dependency, NOT bundled)
+   https://git.liulikeji.cn/xingluo/cc_big_http
+   License: GNU General Public License v2.0 (GPL-2.0)
+   Copyright (c) the cc_big_http authors.
+   NOT included in this distribution. install.lua downloads it at install time
+   and places it at /cc_big_http.lua. It is a hard runtime dependency: every
+   outgoing GET (via ncm/util/httpx.lua) goes through it so that large responses
+   are fetched with HTTP Range requests in 15 MiB chunks, working around the
+   single HTTP response size cap (http_max_download, 16 MiB by default). This
+   project (MIT) neither copies nor redistributes cc_big_http.lua.

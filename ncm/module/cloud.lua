@@ -7,7 +7,10 @@
 -- has none of those, so:
 --   * md5 -> `require("ncm.util.md5").sumhexa`;
 --   * the NOS upload (plugins/songUpload.js) is inlined here and uses the global
---     `http` API with a binary body;
+--     `http` API with a binary body (a POST, so it stays on `httpApi`);
+--   * the lbs lookup GET goes through `ncm.util.httpx` (cc_big_http Range
+--     chunks) because NetEase responses can exceed the 16 MiB
+--     (`http_max_download`) built-in single-response cap;
 --   * `music-metadata` tag parsing is not available. Callers may still pass
 --     `query.songName`/`query.title`, `query.album`, `query.artist`, which the
 --     original would otherwise have read from the file; when absent the same
@@ -30,6 +33,7 @@ local createOption = require("ncm.util.option")
 local js = require("ncm.util.js")
 local json = require("ncm.util.json")
 local md5 = require("ncm.util.md5")
+local httpx = require("ncm.util.httpx")
 
 -- Read the upload file's bytes: either raw `file.data`, or `file.path` read via
 -- fs.open(path, "rb") / readAll() / close().
@@ -114,7 +118,7 @@ local function uploadSongFile(query, request, data)
     return nil, "http API unavailable (need an advanced computer with HTTP enabled)"
   end
   -- try { ... } catch (error) { console.log('error', error.response); throw error.response }
-  local lbsRes, lbsErr = httpApi.get(
+  local lbsRes, lbsErr = httpx.get(
     "https://wanproxy.127.net/lbs?version=1.0&bucketname=" .. bucket
   )
   if not lbsRes then

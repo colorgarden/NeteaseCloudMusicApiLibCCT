@@ -3,16 +3,23 @@
   NeteaseCloudMusicApi (library name: `ncm`).
 
   What it does
-    1. removes any previous install (ncm/, aeslua.lua, aeslua/),
-    2. streams dist/ncm.tar off the internet straight into the filesystem
-       (uncompressed USTAR - no gzip library or temp file needed),
-    3. downloads the aeslua-cc dependency from jsDelivr,
-    4. prints a usage hint.
+    1. removes any previous install (ncm/, aeslua.lua, aeslua/,
+       cc_big_http.lua),
+    2. bootstraps cc_big_http with a plain http.get, then loads it,
+    3. streams dist/ncm.tar off the internet straight into the filesystem
+       through cc_big_http (uncompressed USTAR - no gzip library or temp file
+       needed),
+    4. downloads the aeslua-cc dependency through cc_big_http,
+    5. prints a usage hint.
 
   Requirements
     * An Advanced Computer (or Command Computer) with the HTTP API enabled.
     * The server must allow the github.com / raw.githubusercontent.com host
-      (and cdn.jsdelivr.net) in its http whitelist.
+      (and cdn.jsdelivr.net) in its http whitelist, plus git.liulikeji.cn for
+      the cc_big_http bootstrap download.
+    * cc_big_http concatenates all chunks into one Lua string, so peak memory
+      equals the whole response size; raise computerSpaceLimit above the
+      largest file you intend to fetch (e.g. 64 MB on CraftOS-PC).
 
   Usage
     wget run https://cdn.jsdelivr.net/gh/colorgarden/NeteaseCloudMusicApiLibCCT@main/install.lua
@@ -30,6 +37,12 @@ local CONFIG = {
   root = "/",
   -- aeslua-cc dependency (pure-Lua AES primitives).
   aeslua = "https://cdn.jsdelivr.net/gh/AngusAU293/aeslua-cc@0.2.1-CC/src",
+  -- cc_big_http HARD dependency (GPL-2.0). Fixed upstream URL: it is not part
+  -- of our MIT-licensed bundle, so the library mirror selection below never
+  -- affects it. It is downloaded with the plain http API first (bootstrap),
+  -- then used for every other GET. The server's http_whitelist must include
+  -- git.liulikeji.cn or this download fails.
+  ccBigHttp = "https://git.liulikeji.cn/xingluo/cc_big_http/raw/branch/main/cc_big_http.lua",
 }
 
 local args = { ... }
@@ -134,7 +147,11 @@ local function rmrf(p)
   end
 end
 
-local function httpGet(url)
+-- Plain single-response GET via the built-in http API, with a few retries.
+-- Used only to bootstrap cc_big_http.lua: that file is ~8 KB, well under the
+-- server's http_max_download cap (16 MiB by default), and it cannot download
+-- itself through itself.
+local function bootstrapGet(url)
   if not http then
     die("the HTTP API is unavailable (use an Advanced Computer and enable http)")
   end
@@ -143,6 +160,57 @@ local function httpGet(url)
     local h, err = http.get(url, nil, true)
     if h then return h end
     lastErr = err
+    sleep(1)
+  end
+  return nil, lastErr
+end
+
+-- Download cc_big_http.lua to `dest` with the plain http API, then load it.
+-- cc_big_http is a HARD runtime dependency (GET requests the library makes are
+-- bigger than the single-response cap): it reissues each GET as HTTP Range
+-- requests in 15 MiB chunks and concatenates them. It is GPL-2.0 and is
+-- deliberately NOT bundled with this MIT-licensed project, so we fetch it from
+-- its fixed upstream URL instead of the chosen library mirror.
+local function loadBigHttp(dest)
+  log("Downloading cc_big_http (chunked-GET helper, GPL-2.0) ...")
+  local h, err = bootstrapGet(CONFIG.ccBigHttp)
+  if not h then
+    die("cannot download cc_big_http.lua from " .. CONFIG.ccBigHttp
+      .. " (allow git.liulikeji.cn in http_whitelist, or fetch it manually): "
+      .. tostring(err))
+  end
+  local body = h.readAll()
+  h.close()
+  mkdirp(dirname(dest))
+  local f = assert(fs.open(dest, "wb"))
+  f.write(body)
+  f.close()
+  local chunk, loadErr = loadfile(dest)
+  if not chunk then
+    die("cannot load " .. dest .. ": " .. tostring(loadErr))
+  end
+  local mod = chunk()
+  if type(mod) ~= "table" or type(mod.get) ~= "function" then
+    die(dest .. " did not return a module with a .get function")
+  end
+  return mod
+end
+
+-- GET through cc_big_http. The returned object is shaped like http.get's
+-- response (read / readAll / readLine / getResponseCode /
+-- getResponseHeaders / close), so it can be streamed with the same code.
+local function bigGet(big, url)
+  local lastErr
+  for _ = 1, 3 do
+    local res, err = big.get(url, nil, true)
+    if res then
+      local code = res.getResponseCode()
+      if code == 200 then return res end
+      res.close()
+      lastErr = "HTTP " .. tostring(code)
+    else
+      lastErr = err
+    end
     sleep(1)
   end
   return nil, lastErr
@@ -195,8 +263,8 @@ local function untar(handle, root)
   return count
 end
 
-local function fetchToFile(url, dest)
-  local h, err = httpGet(url)
+local function fetchToFile(big, url, dest)
+  local h, err = bigGet(big, url)
   if not h then return nil, err end
   local body = h.readAll()
   h.close()
@@ -218,17 +286,23 @@ log("Removing previous install (if any) ...")
 rmrf(root .. "ncm")
 rmrf(root .. "aeslua.lua")
 rmrf(root .. "aeslua")
+rmrf(root .. "cc_big_http.lua")
 
--- 2. download + extract the library
+-- 2. bootstrap cc_big_http (plain http.get), then load it. Everything after
+-- this point goes through it. cc_big_http has a single fixed upstream URL and
+-- is not part of our bundle, so it ignores the source picked above.
+local big = loadBigHttp(root .. "cc_big_http.lua")
+
+-- 3. download + extract the library (chunked GET via cc_big_http)
 log("Downloading library bundle ...")
-local handle, err = httpGet(CONFIG.base .. "/dist/ncm.tar")
+local handle, err = bigGet(big, CONFIG.base .. "/dist/ncm.tar")
 if not handle then die("cannot download ncm.tar: " .. tostring(err)) end
 log("Extracting ...")
 local files = untar(handle, root)
 handle.close()
 log("  installed %d files into %sncm/", files, root)
 
--- 3. download the aeslua-cc dependency
+-- 4. download the aeslua-cc dependency (also via cc_big_http)
 log("Downloading dependency (aeslua-cc) ...")
 local deps = {
   "aeslua.lua",
@@ -239,18 +313,22 @@ local deps = {
   "aeslua/util.lua",
 }
 for _, rel in ipairs(deps) do
-  local bytes, derr = fetchToFile(CONFIG.aeslua .. "/" .. rel, root .. rel)
+  local bytes, derr = fetchToFile(big, CONFIG.aeslua .. "/" .. rel, root .. rel)
   if not bytes then die("cannot download " .. rel .. ": " .. tostring(derr)) end
 end
 log("  installed %d dependency files", #deps)
 
--- 4. verify files landed and print usage.
+-- 5. verify files landed and print usage.
 -- We deliberately do NOT call require("ncm") here: `wget run` executes this
 -- installer from /rom/programs/http, and CraftOS resolves relative modules
 -- against the *program's* directory, so it cannot see ncm/ from there. That is
 -- expected and not an install failure.
-if fs.exists(root .. "ncm/init.lua") and fs.exists(root .. "aeslua.lua") then
-  log("Verifying ... OK (%sncm/init.lua and %saeslua.lua present)", root, root)
+local installed = fs.exists(root .. "ncm/init.lua")
+  and fs.exists(root .. "aeslua.lua")
+  and fs.exists(root .. "cc_big_http.lua")
+if installed then
+  log("Verifying ... OK (%sncm/init.lua, %saeslua.lua, %scc_big_http.lua present)",
+    root, root, root)
 else
   log("Warning: expected files are missing under %s", root)
 end

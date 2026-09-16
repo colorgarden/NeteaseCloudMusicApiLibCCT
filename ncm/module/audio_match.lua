@@ -2,7 +2,9 @@
 -- Port of NeteaseCloudMusicApi@4.32.0 module/audio_match.js.
 --
 -- The Node original bypasses the shared `request` helper and calls axios
--- directly, so this port uses CC:Tweaked's global `http` API directly too.
+-- directly, so this port performs the GET through `ncm.util.httpx` (cc_big_http
+-- Range chunks), which is mandatory on CC:Tweaked because NetEase responses can
+-- exceed the 16 MiB (`http_max_download`) built-in single-response cap.
 --
 -- JS:
 --   axios({ method: 'get', url: `https://interface.music.163.com/api/music/audio/match
@@ -13,6 +15,7 @@
 local index = require("ncm.util.index")
 local json = require("ncm.util.json")
 local js = require("ncm.util.js")
+local httpx = require("ncm.util.httpx")
 
 local MATCH_URL = "https://interface.music.163.com/api/music/audio/match"
   .. "?sessionId=0123456789abcdef"
@@ -20,22 +23,13 @@ local MATCH_URL = "https://interface.music.163.com/api/music/audio/match"
   .. "&duration="
 
 return function(query, request)
-  -- CC:Tweaked's http API is a global; read it lazily and do not require("http").
-  local httpApi = rawget(_G, "http")
-  if not httpApi then
-    return {
-      status = 500,
-      body = { code = 500, msg = "http API unavailable (need an advanced computer with HTTP enabled)" },
-    }
-  end
-
   -- Template literal: `...duration=${query.duration}&rawdata=${encodeURIComponent(query.audioFP)}...`
   local url = MATCH_URL
     .. js.tostr(query.duration)
     .. "&rawdata=" .. index.encodeURIComponent(query.audioFP)
     .. "&times=1&decrypt=1"
 
-  local response, err = httpApi.get(url)
+  local response, err = httpx.get(url)
   if not response then
     return { status = 500, body = { code = 500, msg = err or "request failed" } }
   end

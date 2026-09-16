@@ -11,6 +11,12 @@
 --   The compact alternative is DFPWM (1 bit/sample, decoded by the built-in
 --   `cc.audio.dfpwm`); see tools/audio_to_dfpwm.sh to pre-convert on a PC.
 --
+--   Both `playUrl` and `playFlacUrl` fetch over HTTP through `ncm.util.httpx`
+--   (cc_big_http Range chunks), NOT the built-in `http.get`: NetEase audio
+--   exceeds CC:Tweaked's 16 MiB (`http_max_download`) single-response cap. The
+--   response object still supports `read(n)`, so the streaming decoders below
+--   stay memory-bounded while the file is assembled.
+--
 -- Usage:
 --   local audio = require("ncm.util.audio")
 --
@@ -22,6 +28,7 @@
 
 local dfpwm = require("cc.audio.dfpwm")
 local flac = require("ncm.util.flac")
+local httpx = require("ncm.util.httpx")
 
 local M = {}
 
@@ -88,7 +95,7 @@ function M.playUrl(url, opts)
   local speaker = resolveSpeaker(opts.speaker)
   if not speaker then return nil, "no speaker attached" end
   if not http then return nil, "http API unavailable" end
-  local h, err = http.get(url, nil, true)
+  local h, err = httpx.get(url, nil, true)
   if not h then return nil, err end
   local function nextChunk(n) return h.read(n) end
   local ok, res = pcall(streamDfpwm, speaker, nextChunk, opts)
@@ -164,7 +171,7 @@ function M.playFlacUrl(url, opts)
   local speaker = resolveSpeaker(opts.speaker)
   if not speaker then return nil, "no speaker attached" end
   if not http then return nil, "http API unavailable" end
-  local h, err = http.get(url, nil, true)
+  local h, err = httpx.get(url, nil, true)
   if not h then return nil, err end
   local chunk = opts.downloadChunk or 16 * 1024
   local ok, res = pcall(streamFlac, speaker, function() return h.read(chunk) end, opts)

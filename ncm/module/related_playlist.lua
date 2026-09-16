@@ -2,8 +2,10 @@
 -- Port of NeteaseCloudMusicApi@4.32.0 module/related_playlist.js.
 --
 -- The Node original calls axios directly and scrapes the HTML with a global
--- regex, so this port uses CC:Tweaked's global `http` API and a faithful Lua
--- pattern translation of that regex.
+-- regex, so this port performs the GET through `ncm.util.httpx` (cc_big_http
+-- Range chunks) and uses a faithful Lua pattern translation of that regex.
+-- httpx is mandatory on CC:Tweaked because NetEase pages can exceed the 16 MiB
+-- (`http_max_download`) built-in single-response cap.
 --
 -- JS pattern (global):
 --   /<div class="cver u-cover u-cover-3">[\s\S]*?<img src="([^"]+)">[\s\S]*?
@@ -11,6 +13,7 @@
 --    <a class="nm nm f-thide s-fc3" href="([^"]+)"[^>]*>([^<]+?)<\/a>/g
 
 local js = require("ncm.util.js")
+local httpx = require("ncm.util.httpx")
 
 -- `.-` for lazy [\s\S]*?, `[^<]-` for lazy [^<]+?, literal `-` escaped as `%-`.
 local PATTERN = '<div class="cver u%-cover u%-cover%-3">'
@@ -49,16 +52,7 @@ local function parsePlaylists(text)
 end
 
 return function(query, request)
-  -- CC:Tweaked's http API is a global; read it lazily and do not require("http").
-  local httpApi = rawget(_G, "http")
-  if not httpApi then
-    return {
-      status = 500,
-      body = { code = 500, msg = "http API unavailable (need an advanced computer with HTTP enabled)" },
-    }
-  end
-
-  local response, err = httpApi.get("https://music.163.com/playlist?id=" .. js.tostr(query.id))
+  local response, err = httpx.get("https://music.163.com/playlist?id=" .. js.tostr(query.id))
   if not response then
     return { status = 500, body = { code = 500, msg = err or "request failed" } }
   end

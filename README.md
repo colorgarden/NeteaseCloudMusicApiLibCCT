@@ -29,8 +29,20 @@
 |---|---|
 | 电脑 | **Advanced Computer（高级电脑）** 或 Command Computer |
 | HTTP | 必须开启（`http` API 可用） |
-| 服务器白名单 | 放行 `music.163.com`、`interface.music.163.com`；安装时还需 `raw.githubusercontent.com`、`cdn.jsdelivr.net` |
-| 磁盘 | 库约 400 KB（CC 电脑默认 1 MB，够用） |
+| 服务器白名单 | 放行 `music.163.com`、`interface.music.163.com`；安装时还需 `raw.githubusercontent.com`、`cdn.jsdelivr.net` 以及 **`git.liulikeji.cn`**（下载 `cc_big_http` 用） |
+| 磁盘 | 库约 400 KB（CC 电脑默认 1 MB，够用）；音频缓存另计 |
+| 内存 | `computerSpaceLimit` 必须大于你要播放的最大音频文件（见下） |
+
+> **为什么需要 `cc_big_http`**：CC:Tweaked 对**单次 HTTP 响应体**有硬上限
+> `http_max_download`（默认 **16777216 字节 = 16 MiB**）。网易云的音频直链通常有 10–50 MB，
+> 一次性 GET 会因为超过上限而失败。`cc_big_http` 用 HTTP `Range` 把一个大文件拆成 **15 MiB**
+> 的分块依次下载再拼接，从而绕过这个单响应上限；本库的所有对外 GET 都经由它发出。
+
+> **内存要求（重要，请务必调高）**：`cc_big_http` 会把所有分块**拼接成一个 Lua 字符串**，
+> 所以**峰值内存 = 整个文件大小**。默认的 `computerSpaceLimit` 通常只有 1 MB，下载稍大的音频就会
+> 因内存不足失败。请把服务器的 `computerSpaceLimit` 调到**大于你打算播放的最大音频文件**
+> ——例如 CraftOS-PC 单机配置里设为 **64 MB**（`134217728` 字节），才能稳定播放 10–50 MB 的曲目。
+> 这不是可选项：不改的话大文件一定播不了。
 
 ---
 
@@ -48,10 +60,13 @@ wget run https://cdn.jsdelivr.net/gh/colorgarden/NeteaseCloudMusicApiLibCCT@main
 脚本会：
 
 1. **交互式让你选择下载源**（jsDelivr / GitHub raw / ghproxy.net 加速 / 自定义 URL）；
-2. 检测并**删除已安装的旧版本**（`/ncm`、`/aeslua.lua`、`/aeslua`）；
-3. 从所选源**流式下载并解包** `dist/ncm.tar`（边下边写，不占额外磁盘、不需要 gzip 库）；
-4. **自动下载依赖** `aeslua-cc`（跟随所选源）；
-5. 校验文件并打印用法。
+2. 检测并**删除已安装的旧版本**（`/ncm`、`/aeslua.lua`、`/aeslua`、`/cc_big_http.lua`）；
+3. 先用内置 `http` API **下载并加载分块下载库 `cc_big_http`**（约 8 KB；它无法用自己下载自己，
+   所以这一步必须走原生 `http`，且固定使用上游地址 `git.liulikeji.cn`，与你选择的下载源无关）；
+4. 之后所有下载都经由 `cc_big_http` 的 `Range` 分块：**流式下载并解包** `dist/ncm.tar`
+   （边下边写，不占额外磁盘、不需要 gzip 库）；
+5. **自动下载依赖** `aeslua-cc`（跟随所选源）；
+6. 校验文件并打印用法。
 
 安装时会看到：
 
@@ -312,8 +327,17 @@ ncm/cli
 | 组件 | 用途 | 许可 | 获取方式 |
 |---|---|---|---|
 | [aeslua-cc](https://github.com/AngusAU293/aeslua-cc) | AES 块原语 | LGPL | 安装脚本自动下载 |
+| [cc_big_http](https://git.liulikeji.cn/xingluo/cc_big_http) | 分块 GET（绕过单响应上限） | **GPL-2.0** | 安装脚本自动下载，**不随本仓库分发** |
 | [LibDeflate](https://github.com/SafeteeWoW/LibDeflate) | gzip 解压 | zlib | 已内置 `ncm/util/libdeflate.lua` |
 | [NeteaseCloudMusicApi](https://github.com/Binaryify/NeteaseCloudMusicApi) | 原始 Node 实现 | MIT | 本移植的上游 |
+
+**关于 `cc_big_http`（请务必阅读）**：它是本库的**硬运行时依赖**——所有对外 GET 都经由
+`ncm/util/httpx.lua` 交给它，用 HTTP `Range` 分块下载来绕过 `http_max_download`（默认 16 MiB）
+的单响应上限。它采用 **GNU GPL-2.0** 许可，与本项目的 **MIT** 许可**不同**。为尊重其许可，
+本项目**不复制、不内置** `cc_big_http.lua`（仓库目录和 `dist/ncm.tar` 里都没有它），而是由安装脚本
+在安装时从其上游 <https://git.liulikeji.cn/xingluo/cc_big_http> 现场下载到 `/cc_big_http.lua`。
+再分发者需注意：本仓库自身仍是 MIT 许可，但最终用户的电脑上会额外存在一份 GPL-2.0 的
+`cc_big_http.lua`（由安装脚本获取，**并非本仓库提供**）。
 
 本移植自身以 **MIT** 许可发布，详见 [LICENSE](LICENSE)。
 
@@ -322,6 +346,11 @@ ncm/cli
 ## 已知限制
 
 - 需要**高级电脑**且服务器开启 HTTP；CC 的 `http` 是同步的（无并发、无代理、无 gzip 请求体）。
+- **单次 HTTP 响应上限**：`http_max_download` 默认 **16 MiB**（`16777216`）。网易云音频直链常为
+  10–50 MB，必须依赖 `cc_big_http` 的 HTTP `Range` 分块下载；若服务器/上游禁用了 `Range`，
+  超过上限的文件将无法获取。
+- **内存**：`cc_big_http` 会把整个响应拼接成一个 Lua 字符串，**峰值内存 = 文件大小**。必须把
+  `computerSpaceLimit` 调高到大于最大音频文件（例如 CraftOS-PC 下 64 MB），否则大曲目会失败。
 - 上传类接口（`cloud` / `voice_upload` / `avatar_upload` / `playlist_cover_update`）：
   文件从 CC 文件系统读取；原版用 `music-metadata` 读 ID3 标签，CC 上不可用，
   需通过 `songName` / `album` / `artist` 等参数传入元数据。
@@ -343,11 +372,13 @@ ncm/
   util/
     crypto.lua         -- weapi / eapi / linuxapi 加解密
     request.lua        -- CC http 封装、cookie、状态码归一
+    httpx.lua          -- GET 网关：优先走 cc_big_http（Range 分块），回退原生 http
     aes.lua md5.lua rsa.lua base64.lua json.lua
     qrcode.lua         -- 二维码编码 + PNG + 终端渲染
     gzip.lua libdeflate.lua  -- gzip 解压
     config.lua option.lua index.lua js.lua
 install.lua            -- 一键安装脚本
+/cc_big_http.lua       -- 安装时下载的 GPL-2.0 依赖（不在本仓库内）
 dist/ncm.tar           -- 预打包的库（安装脚本下载用）
 tools/build_dist.js    -- 重新生成 dist/ncm.tar
 ```
