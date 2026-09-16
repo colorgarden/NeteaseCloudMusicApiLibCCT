@@ -235,21 +235,29 @@ function M.request(uri, data, options)
   local url, encryptData
   local header -- eapi header object, reused for Cookie + data.header
 
+  -- Upstream is `options.domain || DOMAIN`. option.js defaults domain to `''`,
+  -- and an empty string is TRUTHY in Lua (only nil/false are falsy), so a plain
+  -- `options.domain or APP.domain` would keep the empty string and build a
+  -- scheme-less URL such as "/weapi/login/qrcode/unikey". CraftOS then rejects
+  -- it with "Must specify http or https". Always fall back through js.or_.
+  local webDomain = js.or_(options.domain, APP.domain)
+  local apiDomain = js.or_(options.domain, APP.apiDomain)
+
   if cryptoName == "weapi" then
-    headers["Referer"] = options.domain or APP.domain
+    headers["Referer"] = webDomain
     headers["User-Agent"] = options.ua ~= "" and options.ua or chooseUserAgent("weapi")
     data.csrf_token = csrfToken
     encryptData = crypto.weapi(data)
-    url = (options.domain or APP.domain) .. "/weapi/" .. uri:sub(6)
+    url = webDomain .. "/weapi/" .. uri:sub(6)
 
   elseif cryptoName == "linuxapi" then
     headers["User-Agent"] = options.ua ~= "" and options.ua or chooseUserAgent("linuxapi", "linux")
     encryptData = crypto.linuxapi({
       method = "POST",
-      url = (options.domain or APP.domain) .. uri,
+      url = webDomain .. uri,
       params = data,
     })
-    url = (options.domain or APP.domain) .. "/api/linux/forward"
+    url = webDomain .. "/api/linux/forward"
 
   elseif cryptoName == "eapi" or cryptoName == "api" then
     header = {
@@ -277,14 +285,14 @@ function M.request(uri, data, options)
     if cryptoName == "eapi" then
       data.header = header
       encryptData = crypto.eapi(uri, data)
-      url = (options.domain or APP.apiDomain) .. "/eapi/" .. uri:sub(6)
+      url = apiDomain .. "/eapi/" .. uri:sub(6)
       -- Optional: ask the server to gzip the (encrypted) response. Off by
       -- default, matching the original (which leaves this commented out).
       if options.aeapi then
         headers["x-aeapi"] = "true"
       end
     else
-      url = (options.domain or APP.apiDomain) .. uri
+      url = apiDomain .. uri
       encryptData = data
     end
   else
