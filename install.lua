@@ -169,10 +169,19 @@ local function rmrf(p)
 end
 
 -- Plain single-response GET via the built-in http API, with a few retries.
--- Used only to bootstrap cc_big_http.lua: that file is ~8 KB, well under the
--- server's http_max_download cap (16 MiB by default), and it cannot download
--- itself through itself.
-local function bootstrapGet(url)
+--
+-- Two uses:
+--   1. bootstrapping cc_big_http.lua, which cannot download itself through
+--      itself;
+--   2. falling back when a chunked GET is impossible. Some CDNs (jsDelivr)
+--      force gzip even though cc_big_http sends `Accept-Encoding: identity`,
+--      and CraftOS then transparently decompresses the body, which makes the
+--      HTTP byte ranges meaningless. cc_big_http correctly rejects such a
+--      response ("Invalid chunk size for bytes=...") and there is no way to
+--      detect it from the outside. Every fallback target here (the bundle,
+--      the aeslua-cc files, speakerlib) is far below the 16 MiB single-
+--      response cap, so a plain GET is safe for them.
+local function plainGet(url)
   if not http then
     die("the HTTP API is unavailable (use an Advanced Computer and enable http)")
   end
@@ -194,7 +203,7 @@ end
 -- its fixed upstream URL instead of the chosen library mirror.
 local function loadBigHttp(dest)
   log("Downloading cc_big_http (chunked-GET helper, GPL-2.0) ...")
-  local h, err = bootstrapGet(CONFIG.ccBigHttp)
+  local h, err = plainGet(CONFIG.ccBigHttp)
   if not h then
     die("cannot download cc_big_http.lua from " .. CONFIG.ccBigHttp
       .. " (allow git.liulikeji.cn in http_whitelist, or fetch it manually): "
@@ -286,6 +295,10 @@ end
 
 local function fetchToFile(big, url, dest)
   local h, err = bigGet(big, url)
+  if not h then
+    log("  chunked GET failed (%s); using a plain GET instead", tostring(err))
+    h, err = plainGet(url)
+  end
   if not h then return nil, err end
   local body = h.readAll()
   h.close()
@@ -326,6 +339,10 @@ local big = loadBigHttp(libDir .. "cc_big_http.lua")
 -- 3. download + extract the library (chunked GET via cc_big_http)
 log("Downloading library bundle ...")
 local handle, err = bigGet(big, CONFIG.base .. "/dist/ncm.tar")
+if not handle then
+  log("  chunked GET failed (%s); using a plain GET instead", tostring(err))
+  handle, err = plainGet(CONFIG.base .. "/dist/ncm.tar")
+end
 if not handle then die("cannot download ncm.tar: " .. tostring(err)) end
 log("Extracting ...")
 local files = untar(handle, root)

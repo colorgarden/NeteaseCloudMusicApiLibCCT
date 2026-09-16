@@ -357,6 +357,11 @@ ncm/cli
 - **单次 HTTP 响应上限**：`http_max_download` 默认 **16 MiB**（`16777216`）。网易云音频直链常为
   10–50 MB，必须依赖 `cc_big_http` 的 HTTP `Range` 分块下载；若服务器/上游禁用了 `Range`，
   超过上限的文件将无法获取。
+- **jsDelivr 的 gzip 会破坏 Range 校验（已自动规避）**：jsDelivr 对 `dist/ncm.tar` 强制 gzip，
+  而 CraftOS 会透明解压响应体，导致 `cc_big_http` 的字节区间校验失败
+  （`Invalid chunk size for bytes=...`）。安装器遇到这种情况会**自动回退到原生 GET**
+  （bundle 仅约 700 KB，远低于 16 MiB 上限）。**网易云音频直链不受影响**：音频本身已压缩，
+  CDN 不会再 gzip，因此仍走 `Range` 分块。
 - **内存**：`cc_big_http` 会把整个响应拼接成一个 Lua 字符串，**峰值内存 = 文件大小**。必须把
   `computerSpaceLimit` 调高到大于最大音频文件（例如 CraftOS-PC 下 64 MB），否则大曲目会失败。
 - 上传类接口（`cloud` / `voice_upload` / `avatar_upload` / `playlist_cover_update`）：
