@@ -79,6 +79,56 @@ local CONFIG = {
 
 local args = { ... }
 
+-- ------------------------------------------------------------------- log file
+-- Every line this installer prints is also appended, one line at a time, to a
+-- log file on the computer's internal disk. Writing it immediately (rather than
+-- buffering and dumping at the end) means that if the machine runs out of
+-- memory mid-install, everything up to the last completed line is already on
+-- disk and can be read back after the screen has scrolled away.
+--
+-- Opening is best-effort: a read-only or absent disk must not stop the install,
+-- so a failure only prints one warning and turns logging off.
+local LOG_PATH = "/ncm-install.log"
+local logFile
+do
+  local ok, f = pcall(fs.open, LOG_PATH, "a")
+  if ok and f ~= nil then
+    logFile = f
+  else
+    print("warning: cannot write " .. LOG_PATH .. "; continuing without a log file")
+  end
+end
+
+-- The single place every screen line goes through: print it, then append the
+-- exact same text to the log. A failed append disables logging instead of
+-- aborting. `print` is used (not write) so the installer's own output is
+-- unchanged.
+local function emit(text)
+  local s = tostring(text)
+  print(s)
+  if logFile then
+    local ok = pcall(function() logFile.write(s .. "\n") end)
+    if not ok then logFile = nil end
+  end
+end
+
+-- One header line per run so several runs in the same appended file are easy to
+-- tell apart. UTC and ASCII only.
+local function runHeader()
+  local stamp = "?"
+  local okd, d = pcall(os.date, "!%Y-%m-%dT%H:%M:%SZ")
+  if okd and type(d) == "string" then stamp = d end
+  local id = "?"
+  local okc, c = pcall(os.getComputerID)
+  if okc then id = tostring(c) end
+  local argv = {}
+  for i = 1, #args do argv[i] = tostring(args[i]) end
+  emit(("=== run %s args=%s computer=%s ==="):format(
+    stamp, #argv > 0 and table.concat(argv, " ") or "(none)", id))
+end
+
+runHeader()
+
 -- --------------------------------------------------------------- failure report
 -- One structured reporter for every fatal path. The block is ASCII-only and
 -- delimited so it is easy to spot and easy to copy out of the terminal.
@@ -97,11 +147,11 @@ local function reportFill(prefix, text)
     elseif #line + 1 + #word <= REPORT_WIDTH then
       line = line .. " " .. word
     else
-      print(line)
+      emit(line)
       line = string.rep(" ", #prefix) .. word
     end
   end
-  if started then print(line) end
+  if started then emit(line) end
 end
 
 -- Turn an http.get failure into a reason string. http.get returns
@@ -147,22 +197,25 @@ end
 -- (used to list every failed mirror). Aborts with the reason text, level 0 so
 -- no Lua traceback is printed.
 local function failStep(step, source, reason, hint, details)
-  print(string.rep("-", REPORT_WIDTH))
-  print("INSTALL FAILED")
-  print("  step   : " .. tostring(step))
-  if source and source ~= "" then print("  source : " .. tostring(source)) end
+  emit(string.rep("-", REPORT_WIDTH))
+  emit("INSTALL FAILED")
+  emit("  step   : " .. tostring(step))
+  if source and source ~= "" then emit("  source : " .. tostring(source)) end
   reportFill("  reason : ", reason)
   if details then
     for _, d in ipairs(details) do reportFill("           ", d) end
   end
   if hint and hint ~= "" then reportFill("  try    : ", hint) end
-  print(string.rep("-", REPORT_WIDTH))
+  emit(string.rep("-", REPORT_WIDTH))
+  -- The exact text error() is about to raise, so the log ends with it too.
+  emit(tostring(reason))
+  if logFile then emit("log written to " .. LOG_PATH) end
   error(tostring(reason), 0)
 end
 
 -- Each discrete step prints one start line before it runs.
 local function stepStart(name)
-  print("Step: " .. name)
+  emit("Step: " .. name)
 end
 
 -- Report that every mirror failed, listing each url and its own error.
@@ -216,31 +269,33 @@ local function pickSource()
   if args[1] and args[1] ~= "" then
     CONFIG.base = args[1]:gsub("/+$", "")
     if args[2] and args[2] ~= "" then CONFIG.aeslua = args[2]:gsub("/+$", "") end
-    print("Using command-line source: " .. CONFIG.base)
+    emit("Using command-line source: " .. CONFIG.base)
     return
   end
 
   stepStart("select download source")
-  print("Choose a download source:")
-  for i, m in ipairs(MIRRORS) do print(("  %d) %s"):format(i, m.name)) end
-  print(("  %d) Custom URL"):format(#MIRRORS + 1))
+  emit("Choose a download source:")
+  for i, m in ipairs(MIRRORS) do emit(("  %d) %s"):format(i, m.name)) end
+  emit(("  %d) Custom URL"):format(#MIRRORS + 1))
 
   local n = tonumber(ask("Select [1]: ")) or 1
   if n >= 1 and n <= #MIRRORS then
     CONFIG.base = MIRRORS[n].lib
     CONFIG.aeslua = MIRRORS[n].aes
-    print("Selected: " .. MIRRORS[n].name)
+    emit("Selected: " .. MIRRORS[n].name)
   elseif n == #MIRRORS + 1 then
     local u = ask("Library base URL (the dir containing dist/ncm.tar): ")
     if u ~= "" then CONFIG.base = u:gsub("/+$", "") end
     local a = ask("aeslua dependency URL [default jsDelivr]: ")
     if a ~= "" then CONFIG.aeslua = a:gsub("/+$", "") end
-    print("Using custom source")
+    emit("Using custom source")
   else
     CONFIG.base = MIRRORS[1].lib
     CONFIG.aeslua = MIRRORS[1].aes
-    print("Invalid input, using default: " .. MIRRORS[1].name)
+    emit("Invalid input, using default: " .. MIRRORS[1].name)
   end
+  emit("Selected base URL: " .. CONFIG.base)
+  emit("Selected aeslua URL: " .. CONFIG.aeslua)
 end
 
 stepStart("read config and arguments")
@@ -253,7 +308,7 @@ end
 
 -- ----------------------------------------------------------------- utilities
 local function log(fmt, ...)
-  if select("#", ...) > 0 then print(fmt:format(...)) else print(fmt) end
+  if select("#", ...) > 0 then emit(fmt:format(...)) else emit(fmt) end
 end
 
 -- Byte-count sanity: when the response carried Content-Length, the received
@@ -565,11 +620,11 @@ local function checkTar(step, source, body, required)
   if #names > 0 then found = found .. ", first entries: " .. table.concat(names, ", ") end
 
   if not tarMagicOk(body) or entries == 0 then
-    print("  archive sanity: " .. found)
+    log("  archive sanity: %s", found)
     return nil, "not a USTAR archive (" .. found .. ")"
   end
   if required and not tarHasEntry(body, required) then
-    print("  archive sanity: " .. found)
+    log("  archive sanity: %s", found)
     return nil, ("required entry %s is missing (%s)"):format(required, found)
   end
   log("  archive sanity: OK (%d entries, body %d bytes)", entries, #body)
@@ -604,7 +659,7 @@ local function extractTar(body, root, entries, step, source)
     if not ok then
       finishProgress()
       local detail = ("entry %d/%d %q: %s"):format(done, entries or 0, full, fsErrorText(err))
-      print("  " .. detail)
+      log("  %s", detail)
       failStep(step, source, detail,
         "the target filesystem is full or read-only; free space or choose another install root")
     end
@@ -620,17 +675,27 @@ end
 -- status when the response carried one), non-2xx status, Content-Length
 -- mismatch, a body that is not USTAR, or a missing required entry.
 local function downloadArchive(url, label, required)
+  local started = os.epoch("utc")
   local handle, gerr, gresp = plainGet(url)
-  if not handle then return nil, httpReason(gerr, gresp) end
+  if not handle then
+    local reason = httpReason(gerr, gresp)
+    log("  GET %s -> no response after %d ms: %s", url, os.epoch("utc") - started, reason)
+    return nil, reason
+  end
   local code, message = responseStatus(handle)
   if code and code >= 400 then
     handle.close()
+    log("  GET %s -> HTTP %s after %d ms", url, tostring(code), os.epoch("utc") - started)
     if message then return nil, ("HTTP %d %s"):format(code, tostring(message)) end
     return nil, ("HTTP %d"):format(code)
   end
   local body, got, total = readBodyProgress(handle, "Download")
   handle.close()
   finishProgress()
+  log("  GET %s -> status %s, Content-Length %s, %d bytes received, %d ms",
+    url, code and tostring(code) or "none",
+    (total and total > 0) and tostring(total) or "none",
+    got, os.epoch("utc") - started)
   stepStart("check byte count of " .. label)
   noteByteCount(got, total)
   local mismatch = byteMismatch(got, total)
@@ -646,17 +711,27 @@ end
 local function fetchDep(url, dest, what, step)
   stepStart(step)
   log("  url: %s", url)
+  local started = os.epoch("utc")
   local h, gerr, gresp = plainGet(url)
-  if not h then return nil, httpReason(gerr, gresp) end
+  if not h then
+    local reason = httpReason(gerr, gresp)
+    log("  GET %s -> no response after %d ms: %s", url, os.epoch("utc") - started, reason)
+    return nil, reason
+  end
   local code, message = responseStatus(h)
   if code and code >= 400 then
     h.close()
+    log("  GET %s -> HTTP %s after %d ms", url, tostring(code), os.epoch("utc") - started)
     if message then return nil, ("HTTP %d %s"):format(code, tostring(message)) end
     return nil, ("HTTP %d"):format(code)
   end
   local body, got, total = readBodyProgress(h, "Download")
   h.close()
   finishProgress()
+  log("  GET %s -> status %s, Content-Length %s, %d bytes received, %d ms",
+    url, code and tostring(code) or "none",
+    (total and total > 0) and tostring(total) or "none",
+    got, os.epoch("utc") - started)
   noteByteCount(got, total)
   local mismatch = byteMismatch(got, total)
   if mismatch then return nil, mismatch end
@@ -788,9 +863,9 @@ for i = 1, #bundleSources do
     info = "archive extracted but " .. root .. "ncm/lib.lua is missing"
   end
 
-  print(("  mirror failed: %s"):format(url))
-  print(("  reason: %s"):format(info))
-  print("  trying the next mirror ...")
+  log("  mirror failed: %s", url)
+  log("  reason: %s", info)
+  log("  trying the next mirror ...")
   mirrorErrors[#mirrorErrors + 1] = { url = url, reason = info }
 end
 if not extracted then
@@ -846,11 +921,18 @@ end
 -- against the *program's* directory, so it cannot see ncm/ from there. That is
 -- expected and not an install failure.
 stepStart("verify installed files")
+local checks = {
+  root .. "ncm/init.lua",
+  libDir .. "aeslua.lua",
+  libDir .. "cc_big_http.lua",
+  libDir .. "speaker.lua",
+}
 local missing = {}
-if not fs.exists(root .. "ncm/init.lua") then missing[#missing + 1] = root .. "ncm/init.lua" end
-if not fs.exists(libDir .. "aeslua.lua") then missing[#missing + 1] = libDir .. "aeslua.lua" end
-if not fs.exists(libDir .. "cc_big_http.lua") then missing[#missing + 1] = libDir .. "cc_big_http.lua" end
-if not fs.exists(libDir .. "speaker.lua") then missing[#missing + 1] = libDir .. "speaker.lua" end
+for _, p in ipairs(checks) do
+  local ok = fs.exists(p)
+  log("  %s %s", ok and "OK  " or "MISS", p)
+  if not ok then missing[#missing + 1] = p end
+end
 if #missing > 0 then
   failStep("verify installed files", root, "missing after install: " .. table.concat(missing, ", "),
     "re-run the installer; if it repeats, delete " .. root .. "ncm and retry")
@@ -867,3 +949,5 @@ log("      package.path = \"/?.lua;/?/init.lua;\" .. package.path")
 log("      local ncm = require(\"ncm\")")
 log("  Example:")
 log("      print(textutils.serialize(ncm.search({ keywords = \"Jay Chou\" }).body.result))")
+
+if logFile then logFile.close() end
