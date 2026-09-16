@@ -33,6 +33,29 @@
 | 磁盘 | 库约 400 KB（CC 电脑默认 1 MB，够用）；音频缓存另计 |
 | 内存 | `computerSpaceLimit` 必须大于你要播放的最大音频文件（见下） |
 
+### 磁盘上限（Minecraft 真机必须先改，否则装不下）
+
+CC:Tweaked 的配置文件在实例目录 `config/computercraft-server.toml`：
+
+```toml
+# The disk space limit for computers and turtles, in bytes.
+computer_space_limit = 1000000     # 默认 1 MB —— 不够，请改大
+```
+
+本库约 **440 KB / 400 个文件**，外部依赖约 **80 KB**，而 CC 还会为每个文件的**路径长度**额外计费，
+所以默认的 **1 MB 会在解压时报 `Out of space`**。请改成：
+
+```toml
+computer_space_limit = 5000000
+```
+
+改完需要**重启世界**（或重新放置电脑）才生效。安装器现在会先打印 `free space: N bytes`，
+剩余不足时会直接给出这条修改建议，而不是崩在写入中途。
+
+> 注意两个平台的同名项含义不同：**CraftOS-PC** 的 `computerSpaceLimit`（`config/global.json`）
+> 管的是 **Lua 内存**，播放 10–50 MB 音频时要调大；**CC:Tweaked（Minecraft）** 的
+> `computer_space_limit` 管的是**磁盘**。
+
 > **为什么需要 `cc_big_http`**：CC:Tweaked 对**单次 HTTP 响应体**有硬上限
 > `http_max_download`（默认 **16777216 字节 = 16 MiB**）。网易云的音频直链通常有 10–50 MB，
 > 一次性 GET 会因为超过上限而失败。`cc_big_http` 用 HTTP `Range` 把一个大文件拆成 **15 MiB**

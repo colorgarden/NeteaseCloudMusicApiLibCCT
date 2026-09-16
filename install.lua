@@ -332,6 +332,24 @@ for i = 1, #bundleSources do
   if not handle then
     log("  download failed: %s", tostring(err))
   else
+    -- CC:Tweaked caps a computer's internal disk at `computer_space_limit`
+    -- (config/computercraft-server.toml, default 1,000,000 bytes). The library
+    -- is ~440 KB of Lua across 400 files plus ~80 KB of dependencies, and CC
+    -- also charges for each file's path, so the default is too tight. Check
+    -- first: "Out of space" from deep inside the extractor is impossible to
+    -- act on, this message is not.
+    if fs.getFreeSpace then
+      local free = fs.getFreeSpace(root)
+      log("  free space: %d bytes", free)
+      if free < 800000 then
+        die(string.format(
+          "not enough disk space: %d bytes free, about 800000 needed.\n"
+            .. "  Raise computer_space_limit in config/computercraft-server.toml\n"
+            .. "  (for example 5000000), restart the world, then run this again.",
+          free))
+      end
+    end
+
     log("Extracting ...")
     local files = untar(handle, root)
     handle.close()
