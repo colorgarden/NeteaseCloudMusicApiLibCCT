@@ -63,7 +63,18 @@ if tonumber(src) then
   print(("  type=%s level=%s size=%s"):format(
     tostring(d.type), tostring(d.level), tostring(d.size)))
   if tostring(d.type) ~= "flac" then
-    print("  WARNING: not a FLAC stream; the pure-Lua decoder cannot play this.")
+    -- mp3/aac cannot be decoded by the pure-Lua decoder at all, so hand the
+    -- link to the speaker program, which can have it transcoded to DFPWM.
+    local lib = require("ncm.lib")
+    local speakerProg = lib.dir .. "/speaker.lua"
+    print("Not a FLAC stream; using the speaker program (transcode -> DFPWM).")
+    if not fs.exists(speakerProg) then
+      print("speaker program missing at " .. speakerProg)
+      return
+    end
+    print("Press Ctrl+T to stop.")
+    shell.run(speakerProg, d.url, "-id", "ncm_probe")
+    return
   end
   src = d.url
 end

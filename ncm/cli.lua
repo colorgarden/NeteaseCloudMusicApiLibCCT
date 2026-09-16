@@ -113,8 +113,25 @@ local function findSpeaker()
   return nil
 end
 
--- Fetch a lossless URL for `id` and play it. Pure CC can only decode FLAC, so
--- a non-FLAC (mp3) link is reported instead of being played.
+-- Hand a link to the `speaker` program. For anything that is not DFPWM it asks
+-- its configured transcode service (-server) for a DFPWM stream and plays that,
+-- which costs the computer almost no CPU - the way to get smooth audio when
+-- local decoding cannot keep up, and the only option for mp3/aac, which the
+-- pure-Lua decoder cannot touch at all.
+local function launchSpeakerProgram(url, note)
+  if not fs.exists(SPEAKER_PROGRAM) then
+    print("The speaker program is not installed (" .. SPEAKER_PROGRAM .. ").")
+    return false
+  end
+  if note then print(note) end
+  print("Handing the link to the speaker program (transcode service -> DFPWM)...")
+  shell.run(SPEAKER_PROGRAM, url, "-id", "ncm_cli")
+  return true
+end
+
+-- Fetch a lossless URL for `id` and play it: FLAC is decoded locally by the
+-- pure-Lua decoder, anything else is handed to the speaker program, which can
+-- have it transcoded to DFPWM remotely.
 local function playSong(id, displayName)
   clearScreen()
   if displayName then print("Song: " .. tostring(displayName)) end
@@ -136,12 +153,13 @@ local function playSong(id, displayName)
     return
   end
 
-  if not tostring(url):lower():match("%.flac") then
-    print("This link is not FLAC, so the pure-CC decoder cannot play it.")
-    print("Log in with a lossless/VIP account, or pre-convert on a PC with")
-    print("tools/audio_to_dfpwm.sh and use 'Play a .dfpwm'.")
-    print("")
-    print("Link: " .. tostring(url))
+  -- Prefer the API's own type field; fall back to the URL suffix.
+  local kind = tostring(entry.type or ""):lower()
+  local isFlac = kind == "flac" or tostring(url):lower():match("%.flac") ~= nil
+
+  if not isFlac then
+    launchSpeakerProgram(url,
+      "This link is not FLAC (type=" .. (kind ~= "" and kind or "?") .. ").")
     waitForEnter()
     return
   end
