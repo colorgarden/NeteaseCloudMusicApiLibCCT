@@ -4,19 +4,21 @@
 
   What it does
     1. removes any previous install (ncm/, aeslua.lua, aeslua/,
-       cc_big_http.lua),
+       cc_big_http.lua, speaker.lua),
     2. bootstraps cc_big_http with a plain http.get, then loads it,
     3. streams dist/ncm.tar off the internet straight into the filesystem
        through cc_big_http (uncompressed USTAR - no gzip library or temp file
        needed),
     4. downloads the aeslua-cc dependency through cc_big_http,
-    5. prints a usage hint.
+    5. downloads cc_speakerlib as /speaker.lua (the speaker program `ncm/cli`
+       uses for local .dfpwm passthrough),
+    6. prints a usage hint.
 
   Requirements
     * An Advanced Computer (or Command Computer) with the HTTP API enabled.
     * The server must allow the github.com / raw.githubusercontent.com host
       (and cdn.jsdelivr.net) in its http whitelist, plus git.liulikeji.cn for
-      the cc_big_http bootstrap download.
+      the cc_big_http and cc_speakerlib downloads.
     * cc_big_http concatenates all chunks into one Lua string, so peak memory
       equals the whole response size; raise computerSpaceLimit above the
       largest file you intend to fetch (e.g. 64 MB on CraftOS-PC).
@@ -43,6 +45,12 @@ local CONFIG = {
   -- then used for every other GET. The server's http_whitelist must include
   -- git.liulikeji.cn or this download fails.
   ccBigHttp = "https://git.liulikeji.cn/xingluo/cc_big_http/raw/branch/main/cc_big_http.lua",
+  -- cc_speakerlib, installed as /speaker.lua. Its own SPDX header declares
+  -- MPL-2.0 (the upstream repo ships no LICENSE file). Like cc_big_http it is
+  -- NOT bundled with this MIT project and is fetched from its fixed upstream
+  -- URL. It is the `speaker` program `ncm/cli` launches for local .dfpwm
+  -- passthrough, and it auto-detects /cc_big_http.lua next to itself.
+  speakerlib = "https://git.liulikeji.cn/xingluo/cc_speakerlib/raw/branch/main/speakerlib.lua",
 }
 
 local args = { ... }
@@ -287,6 +295,7 @@ rmrf(root .. "ncm")
 rmrf(root .. "aeslua.lua")
 rmrf(root .. "aeslua")
 rmrf(root .. "cc_big_http.lua")
+rmrf(root .. "speaker.lua")
 
 -- 2. bootstrap cc_big_http (plain http.get), then load it. Everything after
 -- this point goes through it. cc_big_http has a single fixed upstream URL and
@@ -318,7 +327,16 @@ for _, rel in ipairs(deps) do
 end
 log("  installed %d dependency files", #deps)
 
--- 5. verify files landed and print usage.
+-- 5. download cc_speakerlib as /speaker.lua (also via cc_big_http). It is
+-- installed next to cc_big_http.lua so its automatic detection finds it.
+-- Note: `ncm/cli` only ever asks it to play local .dfpwm files, so its
+-- remote-transcode default (-server) is never used.
+log("Downloading dependency (cc_speakerlib -> /speaker.lua) ...")
+local spBytes, spErr = fetchToFile(big, CONFIG.speakerlib, root .. "speaker.lua")
+if not spBytes then die("cannot download speakerlib.lua: " .. tostring(spErr)) end
+log("  installed speaker.lua (%d bytes)", spBytes)
+
+-- 6. verify files landed and print usage.
 -- We deliberately do NOT call require("ncm") here: `wget run` executes this
 -- installer from /rom/programs/http, and CraftOS resolves relative modules
 -- against the *program's* directory, so it cannot see ncm/ from there. That is
@@ -326,9 +344,10 @@ log("  installed %d dependency files", #deps)
 local installed = fs.exists(root .. "ncm/init.lua")
   and fs.exists(root .. "aeslua.lua")
   and fs.exists(root .. "cc_big_http.lua")
+  and fs.exists(root .. "speaker.lua")
 if installed then
-  log("Verifying ... OK (%sncm/init.lua, %saeslua.lua, %scc_big_http.lua present)",
-    root, root, root)
+  log("Verifying ... OK (%sncm/init.lua, %saeslua.lua, %scc_big_http.lua, %sspeaker.lua present)",
+    root, root, root, root)
 else
   log("Warning: expected files are missing under %s", root)
 end

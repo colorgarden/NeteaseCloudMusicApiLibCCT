@@ -33,3 +33,14 @@ This project (MIT) builds on and/or bundles the following components.
    are fetched with HTTP Range requests in 15 MiB chunks, working around the
    single HTTP response size cap (http_max_download, 16 MiB by default). This
    project (MIT) neither copies nor redistributes cc_big_http.lua.
+
+6. cc_speakerlib  (the `speaker` program; HARD runtime dependency, NOT bundled)
+   https://git.liulikeji.cn/xingluo/cc_speakerlib
+   License: MPL-2.0, as declared in the SPDX header of speakerlib.lua itself
+   (the upstream repository ships no LICENSE file). It is derived from the
+   CC: Tweaked `speaker` program.
+   NOT included in this distribution. install.lua downloads speakerlib.lua at
+   install time and places it at /speaker.lua. `ncm/cli` launches it to play
+   local .dfpwm files only (its remote-transcode option is never used), and it
+   auto-detects /cc_big_http.lua in its own directory. This project (MIT)
+   neither copies nor redistributes speakerlib.lua.

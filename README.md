@@ -29,7 +29,7 @@
 |---|---|
 | 电脑 | **Advanced Computer（高级电脑）** 或 Command Computer |
 | HTTP | 必须开启（`http` API 可用） |
-| 服务器白名单 | 放行 `music.163.com`、`interface.music.163.com`；安装时还需 `raw.githubusercontent.com`、`cdn.jsdelivr.net` 以及 **`git.liulikeji.cn`**（下载 `cc_big_http` 用） |
+| 服务器白名单 | 放行 `music.163.com`、`interface.music.163.com`；安装时还需 `raw.githubusercontent.com`、`cdn.jsdelivr.net` 以及 **`git.liulikeji.cn`**（下载 `cc_big_http` / `cc_speakerlib` 用） |
 | 磁盘 | 库约 400 KB（CC 电脑默认 1 MB，够用）；音频缓存另计 |
 | 内存 | `computerSpaceLimit` 必须大于你要播放的最大音频文件（见下） |
 
@@ -328,6 +328,7 @@ ncm/cli
 |---|---|---|---|
 | [aeslua-cc](https://github.com/AngusAU293/aeslua-cc) | AES 块原语 | LGPL | 安装脚本自动下载 |
 | [cc_big_http](https://git.liulikeji.cn/xingluo/cc_big_http) | 分块 GET（绕过单响应上限） | **GPL-2.0** | 安装脚本自动下载，**不随本仓库分发** |
+| [cc_speakerlib](https://git.liulikeji.cn/xingluo/cc_speakerlib) | `speaker` 播放程序（本地 DFPWM） | **MPL-2.0**（文件头 SPDX 声明；上游无 LICENSE 文件） | 安装脚本自动下载为 `/speaker.lua`，**不随本仓库分发** |
 | [LibDeflate](https://github.com/SafeteeWoW/LibDeflate) | gzip 解压 | zlib | 已内置 `ncm/util/libdeflate.lua` |
 | [NeteaseCloudMusicApi](https://github.com/Binaryify/NeteaseCloudMusicApi) | 原始 Node 实现 | MIT | 本移植的上游 |
 
@@ -338,6 +339,13 @@ ncm/cli
 在安装时从其上游 <https://git.liulikeji.cn/xingluo/cc_big_http> 现场下载到 `/cc_big_http.lua`。
 再分发者需注意：本仓库自身仍是 MIT 许可，但最终用户的电脑上会额外存在一份 GPL-2.0 的
 `cc_big_http.lua`（由安装脚本获取，**并非本仓库提供**）。
+
+**关于 `cc_speakerlib`**：它是 `ncm/cli` 用来播放本地 `.dfpwm` 的 `speaker` 程序，安装为
+`/speaker.lua`。它**自身会去同目录查找 `cc_big_http.lua`**（所以两者都装在 `/` 下即可自动配合）。
+其源码头部声明 `SPDX-License-Identifier: MPL-2.0`（衍生自 CC:Tweaked 的 `speaker` 程序），
+但**上游仓库没有 LICENSE 文件**。同样地，本项目**不内置**它，由安装脚本从上游现场下载。
+它默认带一个远程转码接口（`-server`），但 `ncm/cli` 只让它播放**本地 `.dfpwm` 直通**，
+**不会**触发任何远程转码。
 
 本移植自身以 **MIT** 许可发布，详见 [LICENSE](LICENSE)。
 
@@ -372,13 +380,14 @@ ncm/
   util/
     crypto.lua         -- weapi / eapi / linuxapi 加解密
     request.lua        -- CC http 封装、cookie、状态码归一
-    httpx.lua          -- GET 网关：优先走 cc_big_http（Range 分块），回退原生 http
+    httpx.lua          -- GET 网关：硬依赖 cc_big_http（Range 分块），缺失即报错（不回退原生 http）
     aes.lua md5.lua rsa.lua base64.lua json.lua
     qrcode.lua         -- 二维码编码 + PNG + 终端渲染
     gzip.lua libdeflate.lua  -- gzip 解压
     config.lua option.lua index.lua js.lua
 install.lua            -- 一键安装脚本
 /cc_big_http.lua       -- 安装时下载的 GPL-2.0 依赖（不在本仓库内）
+/speaker.lua           -- 安装时下载的 MPL-2.0 依赖（cc_speakerlib，不在本仓库内）
 dist/ncm.tar           -- 预打包的库（安装脚本下载用）
 tools/build_dist.js    -- 重新生成 dist/ncm.tar
 ```
