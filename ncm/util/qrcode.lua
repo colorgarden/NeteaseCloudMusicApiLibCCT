@@ -715,117 +715,18 @@ local function padMatrix(qr, border)
   return m, n
 end
 
-local ASCII_STYLES = {
-  text = { dark = "\226\150\136\226\150\136", light = "  " }, -- "██" (2 cells)
-  compact = { dark = "\226\150\136", light = " " },           -- "█"  (1 cell)
-  ascii = { dark = "#", light = " " },                        -- pure ASCII
-}
-
--- UTF-8 encode a 3-byte code point (used for the Braille block U+2800..U+28FF).
-local function u3(cp)
-  return string.char(
-    0xE0 + math.floor(cp / 4096),
-    0x80 + math.floor(cp / 64) % 64,
-    0x80 + cp % 64
-  )
-end
-
--- Render `text` as an array of terminal lines.
---
--- opts:
---   style   = "text" (default, "██"/"  ", 2 cells/module)
---           | "compact" ("█"/" ", 1 cell/module)
---           | "ascii"   ("#"/" ", 1 cell/module, pure ASCII)
---           | "half"    ("█"/"▀"/"▄"/" ", two module rows per line)
---           | "braille" (2x4 modules per Unicode Braille char, densest)
---   border  = quiet-zone width in modules (default 2)
---   invert  = swap dark/light (default false)
-function M.toLines(text, opts)
-  opts = opts or {}
-  local qr = encodeMatrix(text, opts)
-  local border = opts.border == nil and 2 or opts.border
-  local style = opts.style or "text"
-  local invert = opts.invert and true or false
-  local modules, n = padMatrix(qr, border)
-
-  local function darkAt(x, y)
-    local d = modules[y + 1][x + 1]
-    if invert then d = not d end
-    return d
-  end
-
-  local lines = {}
-  if style == "braille" then
-    -- Unicode Braille packs a 2x4 block of modules into one character
-    -- (U+2800 + dot bits). Highest terminal density; needs a font that has the
-    -- Braille Patterns block (e.g. a suitable CC resource pack).
-    local nw = n + (n % 2)                    -- pad width to even
-    local nh = n + ((4 - (n % 4)) % 4)        -- pad height to a multiple of 4
-    local function dark(x, y)
-      if x >= n or y >= n then return false end
-      return darkAt(x, y)
-    end
-    for cy = 0, math.floor(nh / 4) - 1 do
-      local out = {}
-      for cx = 0, math.floor(nw / 2) - 1 do
-        local bx, by = cx * 2, cy * 4
-        local bits = 0
-        if dark(bx, by) then bits = bits + 0x01 end
-        if dark(bx, by + 1) then bits = bits + 0x02 end
-        if dark(bx, by + 2) then bits = bits + 0x04 end
-        if dark(bx + 1, by) then bits = bits + 0x08 end
-        if dark(bx + 1, by + 1) then bits = bits + 0x10 end
-        if dark(bx + 1, by + 2) then bits = bits + 0x20 end
-        if dark(bx, by + 3) then bits = bits + 0x40 end
-        if dark(bx + 1, by + 3) then bits = bits + 0x80 end
-        out[#out + 1] = u3(0x2800 + bits)
-      end
-      lines[#lines + 1] = table.concat(out)
-    end
-  elseif style == "half" then
-    local UPPER, LOWER, FULL, EMPTY = "\226\150\128", "\226\150\132", "\226\150\136", " "
-    local y = 0
-    while y < n do
-      local out = {}
-      for x = 0, n - 1 do
-        local top = darkAt(x, y)
-        local bot = (y + 1 < n) and darkAt(x, y + 1) or false
-        if top and bot then out[#out + 1] = FULL
-        elseif top then out[#out + 1] = UPPER
-        elseif bot then out[#out + 1] = LOWER
-        else out[#out + 1] = EMPTY end
-      end
-      lines[#lines + 1] = table.concat(out)
-      y = y + 2
-    end
-  else
-    local st = ASCII_STYLES[style] or ASCII_STYLES.text
-    for y = 0, n - 1 do
-      local out = {}
-      for x = 0, n - 1 do
-        out[#out + 1] = darkAt(x, y) and st.dark or st.light
-      end
-      lines[#lines + 1] = table.concat(out)
-    end
-  end
-  return lines
-end
-
--- Print the QR to stdout (and therefore to a CC:Tweaked terminal).
-function M.printASCII(text, opts)
-  for _, line in ipairs(M.toLines(text, opts)) do
-    print(line)
-  end
-end
-
--- Draw the QR using terminal background colours (one cell per module). This is
--- the most reliable rendering on CC:Tweaked (no glyph/font dependency).
+-- Draw the QR using terminal background colours (one cell per module). Only a
+-- fallback: `printCC` above is the primary renderer on CC:Tweaked because it is
+-- compact enough for a 51x19 terminal. This one needs no glyphs at all, so it
+-- still works if term.blit is unavailable.
 function M.draw(text, opts)
   opts = opts or {}
   local termApi = rawget(_G, "term")
   local coloursApi = rawget(_G, "colours")
   if not termApi or not coloursApi then
-    return M.printASCII(text, opts)
+    -- No terminal to draw on: the compact renderer, which returns nil
+    -- when term.blit is missing rather than crashing.
+    return M.printCC(text, opts)
   end
 
   local qr = encodeMatrix(text, opts)

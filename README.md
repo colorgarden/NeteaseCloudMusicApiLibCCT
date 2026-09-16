@@ -199,44 +199,44 @@ end
 
 ## 二维码渲染 API（`ncm.util.qrcode`）
 
+库只保留实际使用的那一个渲染器，避免死代码：
+
+| 函数 | 用途 |
+|---|---|
+| `encode(text, opts)` | 生成模块矩阵（`{ version, size, modules }`），`opts.ecl` = L/M/Q/H，默认自动选版本 |
+| `toDataURL(text, opts)` | 生成 PNG data URL（`login_qr_create` 的 `qrimg` 用它） |
+| `printCC(text, opts)` | **主力渲染器**：用 CC 字体在字节 0x80–0x9F 的 3×2 子像素字形 + `term.blit` 上色，一个字符格放 6 个模块，33 模块的码只占 17 列 × 12 行，适配默认 51×19 终端。`opts.border` 默认 1 |
+| `draw(text, opts)` | 兜底渲染器：一格一个模块、纯背景色，不依赖任何字形（终端太小时不适合） |
+
+`printCC` 的打包启发式改写自 GMapiServer 的 `qr_bimg_utils.py`（GPL-2.0，见 [NOTICE](NOTICE)）。
+
 ```lua
 local qr = require("ncm.util.qrcode")
-
-qr.toDataURL(text)            -- "data:image/png;base64,..."（标准 PNG）
-qr.encode(text)               -- 模块矩阵 { version, size, modules[y][x]=dark }
-qr.toLines(text, opts)        -- 返回多行字符串（自行排版）
-qr.printASCII(text, opts)     -- 直接打印到终端
-qr.draw(text, opts)           -- 用终端背景色绘制（CC 上最可靠）
-
--- 纠错等级 L/M/Q/H（默认 M，等级越高越抗损但码更大）
-qr.toDataURL(text, "H")                       -- 字符串简写
-qr.encode(text, { ecl = "Q" })                -- 也可用 errorCorrectionLevel / level
-qr.toLines(text, { style = "braille", ecl = "H" })
+qr.printCC("https://music.163.com/login?codekey=...", { border = 1 })
 ```
-
-`opts.style`：
-
-| style | 效果 | 宽度 | 行数 |
-|---|---|---|---|
-| `text`（默认） | 每模块 2 格 `██`/空格 | 2N | N |
-| `compact` | 每模块 1 格 `█`/空格 | N | N |
-| `ascii` | `#`/空格（纯 ASCII） | N | N |
-| `half` | 半块 `█▀▄`，两行模块压一行 | N | ⌈N/2⌉ |
-| `braille` | Unicode 盲文，2×4 模块压 1 格（**密度最高**） | ⌈N/2⌉ | ⌈N/4⌉ |
-
-其它选项：`border`（静默区，默认 2）、`invert`（反色）。
-
-> `braille` 密度最高，但要**终端字体包含 Unicode 盲文块**（U+2800–U+28FF）才能正常显示；
-> 普通 CC 字体可能没有该字形。不确定时用 `half` 或 `compact`。
-
----
-
 ## 播放音乐(扬声器)
 
 CC 的扬声器 `speaker.playAudio` 只接受 **8-bit PCM(振幅 −128..127,48kHz)**,而且 CC **无法解码
 mp3/aac**。有两种可行方案:
 
+### 方案 C:交给 speakerlib,用远程转码服务器(最省 CPU)
+
+仓库里的 `ncm/lib/speaker.lua`（**cc_speakerlib**）自带一个 `-server` 远程转码接口，默认
+`http://newgmapi.liulikeji.cn/api/ffmpeg`：把任意音频 URL（**mp3 / aac / flac 都行**）发给它，
+服务器用 ffmpeg 转成 **DFPWM** 再回传，本地只做 DFPWM 解码（1 bit/样本，几乎不耗 CPU）。
+
+- **mp3/aac 只有这条路能播**（纯 Lua 解不了 mp3）；
+- FLAC 也走它最省事 —— 本地解码跟不上时，这是不动机器配置就能顺畅播放的办法；
+- `ncm/cli` 已自动分流：`type == "flac"` 走本地解码，其余交给 speaker 程序；
+- 它自带的 UI 有进度条 / 暂停 / 点击跳转（我们的 `ncm/cli` 直接沿用）。
+
+```
+-- 手动调用（也可以直接在 shell 里跑）
+speaker "https://.../song.mp3" -id my_music
+```
+
 ### 方案 A:纯 CC,流式解码 FLAC(内置,无外部工具)
+
 
 `ncm.util.audio` 内置了一个**纯 Lua 流式 FLAC 解码器**(`ncm.util.flac`):FLAC 是逐帧的,可以
 **边下载边解码边播放**,内存恒定。已与 ffmpeg 对拍,16/24-bit 解码**逐字节一致**。

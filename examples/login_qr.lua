@@ -10,7 +10,7 @@ print("二维码 key: " .. tostring(key))
 
 -- 2) 生成登录二维码并绘制到终端(half 模式适合默认 51x19 终端)
 local q = ncm.login_qr_create({ key = key })
-qr.draw(q.body.data.qrurl, { style = "half", border = 1 })
+qr.printCC(q.body.data.qrurl, { border = 1 })
 print("请用网易云音乐 App 扫码登录…")
 
 -- 3) 轮询扫码状态
