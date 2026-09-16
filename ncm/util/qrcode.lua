@@ -1,9 +1,10 @@
 -- ncm/util/qrcode.lua
 -- Pure-Lua replacement for the npm `qrcode` package used by the Node original.
 --
--- Scope: byte-mode QR encoder (error-correction level M, automatic version
--- 1..40) followed by a minimal PNG encoder.  `toDataURL(text)` returns
--- "data:image/png;base64,<...>".
+-- Scope: byte-mode QR encoder (error-correction levels L/M/Q/H, automatic
+-- version 1..40) followed by a minimal PNG encoder, plus terminal renderers
+-- (text / compact / ascii / half-block / Unicode Braille). `toDataURL(text)`
+-- returns "data:image/png;base64,<...>".
 --
 -- Compatibility: Lua 5.2 / CC:Tweaked (uses the standard `bit32` library).
 -- No external Lua or non-Lua dependency is required.
