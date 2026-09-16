@@ -193,9 +193,19 @@ function M.playFlacFile(path, opts)
   return res
 end
 
--- Open a FLAC source (HTTP(S) URL or local path) as a chunk reader.
+-- Open a FLAC source as a chunk reader. Accepts a local path, an HTTP(S) URL,
+-- or `{ data = "..." }` for a body that was already downloaded into memory.
 local function openSource(source, opts)
   local readSize = opts.downloadChunk or 64 * 1024
+  if type(source) == "table" then
+    local data, pos = source.data, 1
+    return function()
+      if pos > #data then return nil end
+      local chunk = data:sub(pos, pos + readSize - 1)
+      pos = pos + #chunk
+      return chunk
+    end, function() end, nil
+  end
   if type(source) == "string" and source:match("^https?://") then
     if not http then return nil, nil, "http API unavailable" end
     local h, err = httpx.get(source, nil, true)
@@ -209,6 +219,33 @@ local function openSource(source, opts)
   return function() return f.read(readSize) end,
     function() pcall(function() f.close() end) end,
     nil
+end
+
+-- Download a whole response into one string. Used by the "download, then
+-- decode, then play" flow, so the network is never interleaved with decoding.
+-- Returns body, totalBytes | nil, err.
+function M.download(url, opts)
+  opts = opts or {}
+  if not http then return nil, "http API unavailable" end
+  local h, err = httpx.get(url, nil, true)
+  if not h then return nil, err end
+  local readSize = opts.downloadChunk or 64 * 1024
+  local parts, n, total = {}, 0, 0
+  local ok, res = pcall(function()
+    while true do
+      local chunk = h.read(readSize)
+      if not chunk or #chunk == 0 then break end
+      n = n + 1
+      parts[n] = chunk
+      total = total + #chunk
+      if opts.onProgress then opts.onProgress(total) end
+      sleep(0)
+    end
+    return total
+  end)
+  h.close()
+  if not ok then return nil, res end
+  return table.concat(parts), res
 end
 
 -- Decode a whole FLAC into an in-memory DFPWM stream. Local only: no remote
@@ -371,20 +408,34 @@ function M.playFlacPrebuffered(source, opts)
   return res
 end
 
--- Local decode + smooth playback in one call: decode the whole FLAC to DFPWM in
--- memory, then play it. No remote service, no config change.
+-- Local, no remote service: download the whole stream, decode all of it, then
+-- play the result. Nothing is time-critical until playback begins, so a decoder
+-- that is slower than real time still produces smooth audio - it just takes
+-- longer before the music starts.
+--
+-- Accepts a URL, a local path, or already-downloaded `{ data = "..." }`.
 -- Returns the number of samples played, or nil, err.
 function M.playFlacBuffered(source, opts)
   opts = opts or {}
   local speaker = resolveSpeaker(opts.speaker)
   if not speaker then return nil, "no speaker attached" end
 
-  local data, samplesOrErr = M.flacToDfpwm(source, opts)
-  if not data then return nil, samplesOrErr end
+  local data
+  if type(source) == "table" then
+    data = source.data
+  elseif type(source) == "string" and source:match("^https?://") then
+    local bytes, derr = M.download(source, { onProgress = opts.onDownload })
+    if not bytes then return nil, derr end
+    data = bytes
+  end
+
+  local dfpwm, samplesOrErr = M.flacToDfpwm(data and { data = data } or source, opts)
+  data = nil -- release the FLAC copy before playback
+  if not dfpwm then return nil, samplesOrErr end
 
   if opts.onDecoded then opts.onDecoded(samplesOrErr) end
   opts.speaker = speaker
-  return M.playDfpwmData(data, opts)
+  return M.playDfpwmData(dfpwm, opts)
 end
 
 -- Decode a whole FLAC (HTTP(S) URL or local path) into a .dfpwm file at

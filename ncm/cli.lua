@@ -172,22 +172,38 @@ local function playSong(id, displayName)
   end
 
   local audio = require("ncm.util.audio")
-  local prebuffer = 10
-  print(("Decoding %d s ahead, then playing while it keeps decoding..."):format(prebuffer))
-  local samples, err = audio.playFlacPrebuffered(url, {
-    volume = 1.0,
-    speaker = speaker,
-    prebuffer = prebuffer,
-    onBuffered = function(buffered)
+
+  print("1/3 Downloading the whole stream ...")
+  local flac, derr = audio.download(url, {
+    onProgress = function(n)
       term.clearLine()
-      term.write(("  buffered %.0f s - starting playback"):format(buffered / 48000))
-    end,
-    onProgress = function(played, buffered)
-      term.clearLine()
-      term.write(("  played %.0f s, %.0f s ahead"):format(played / 48000, buffered / 48000))
+      term.write(("  %.2f MB"):format(n / 1048576))
     end,
   })
   print("")
+  if not flac then
+    print("Download failed: " .. tostring(derr))
+    waitForEnter()
+    return
+  end
+
+  print("2/3 Decoding (no deadline; this can take a while) ...")
+  local dfpwm, samplesOrErr = audio.flacToDfpwm({ data = flac }, {
+    onProgress = function(total, dec)
+      term.clearLine()
+      term.write(("  decoded %.0f s @ %d Hz"):format(total / 48000, dec.sampleRate))
+    end,
+  })
+  print("")
+  flac = nil -- release the FLAC copy before playback
+  if not dfpwm then
+    print("Decode failed: " .. tostring(samplesOrErr))
+    waitForEnter()
+    return
+  end
+
+  print("3/3 Playing (Ctrl+T to stop) ...")
+  local samples, err = audio.playDfpwmData(dfpwm, { volume = 1.0, speaker = speaker })
   if not samples then
     print("Playback failed: " .. tostring(err))
   else
