@@ -5,14 +5,17 @@
   What it does
     1. removes any previous install (ncm/, plus the root-level dependency
        files written by older versions of this installer),
-    2. bootstraps cc_big_http with a plain http.get, then loads it,
+    2. downloads cc_big_http (the library's runtime dependency for large GETs),
     3. streams dist/ncm.tar off the internet straight into the filesystem
-       through cc_big_http (uncompressed USTAR - no gzip library or temp file
-       needed),
-    4. downloads the aeslua-cc dependency through cc_big_http,
+       (uncompressed USTAR - no gzip library or temp file needed),
+    4. downloads the aeslua-cc dependency,
     5. downloads cc_speakerlib, the speaker program `ncm/cli` uses for local
        .dfpwm passthrough,
-    6. prints a usage hint.
+    6. verifies the bundle it extracted is current, and prints a usage hint.
+
+  Everything the installer fetches is small (a few hundred KB at most, far
+  below the ~16 MiB single-response cap), so it uses plain http GETs. The
+  library itself routes its large audio GETs through cc_big_http at runtime.
 
   Layout
     Everything lives inside one deletable tree; no files are scattered in the
@@ -195,55 +198,30 @@ local function plainGet(url)
   return nil, lastErr
 end
 
--- Download cc_big_http.lua to `dest` with the plain http API, then load it.
--- cc_big_http is a HARD runtime dependency (GET requests the library makes are
--- bigger than the single-response cap): it reissues each GET as HTTP Range
--- requests in 15 MiB chunks and concatenates them. It is GPL-2.0 and is
--- deliberately NOT bundled with this MIT-licensed project, so we fetch it from
--- its fixed upstream URL instead of the chosen library mirror.
-local function loadBigHttp(dest)
-  log("Downloading cc_big_http (chunked-GET helper, GPL-2.0) ...")
-  local h, err = plainGet(CONFIG.ccBigHttp)
-  if not h then
-    die("cannot download cc_big_http.lua from " .. CONFIG.ccBigHttp
-      .. " (allow git.liulikeji.cn in http_whitelist, or fetch it manually): "
-      .. tostring(err))
-  end
+-- Download one file with the plain http API.
+--
+-- The installer uses plain GETs for everything it fetches: the bundle is
+-- ~700 KB, cc_big_http ~8 KB, the aeslua-cc files ~4 KB each and speakerlib
+-- ~40 KB - all far below the 16 MiB single-response cap.
+--
+-- cc_big_http is only correct for *large* responses. Its Range chunking
+-- requires the server not to compress the body; CDNs such as jsDelivr ignore
+-- `Accept-Encoding: identity` for text files, CraftOS then transparently
+-- decompresses the body, and cc_big_http's byte-range validation rejects the
+-- result ("Invalid chunk size for bytes=..."). The library still uses it at
+-- runtime, where the GETs are large already-compressed audio files, which is
+-- exactly what it is built for.
+local function fetchDep(url, dest, what)
+  log("Downloading %s ...", what)
+  local h, err = plainGet(url)
+  if not h then return nil, tostring(err) end
   local body = h.readAll()
   h.close()
   mkdirp(dirname(dest))
   local f = assert(fs.open(dest, "wb"))
   f.write(body)
   f.close()
-  local chunk, loadErr = loadfile(dest)
-  if not chunk then
-    die("cannot load " .. dest .. ": " .. tostring(loadErr))
-  end
-  local mod = chunk()
-  if type(mod) ~= "table" or type(mod.get) ~= "function" then
-    die(dest .. " did not return a module with a .get function")
-  end
-  return mod
-end
-
--- GET through cc_big_http. The returned object is shaped like http.get's
--- response (read / readAll / readLine / getResponseCode /
--- getResponseHeaders / close), so it can be streamed with the same code.
-local function bigGet(big, url)
-  local lastErr
-  for _ = 1, 3 do
-    local res, err = big.get(url, nil, true)
-    if res then
-      local code = res.getResponseCode()
-      if code == 200 then return res end
-      res.close()
-      lastErr = "HTTP " .. tostring(code)
-    else
-      lastErr = err
-    end
-    sleep(1)
-  end
-  return nil, lastErr
+  return #body
 end
 
 local function readN(handle, n)
@@ -293,22 +271,6 @@ local function untar(handle, root)
   return count
 end
 
-local function fetchToFile(big, url, dest)
-  local h, err = bigGet(big, url)
-  if not h then
-    log("  chunked GET failed (%s); using a plain GET instead", tostring(err))
-    h, err = plainGet(url)
-  end
-  if not h then return nil, err end
-  local body = h.readAll()
-  h.close()
-  mkdirp(dirname(dest))
-  local f = assert(fs.open(dest, "wb"))
-  f.write(body)
-  f.close()
-  return #body
-end
-
 -- --------------------------------------------------------------------- main
 local root = CONFIG.root
 log("NeteaseCloudMusicApi (ncm) installer for CC:Tweaked")
@@ -330,11 +292,19 @@ rmrf(root .. "aeslua")
 rmrf(root .. "cc_big_http.lua")
 rmrf(root .. "speaker.lua")
 
--- 2. bootstrap cc_big_http (plain http.get), then load it. Everything after
--- this point goes through it. cc_big_http has a single fixed upstream URL and
--- is not part of our bundle, so it ignores the source picked above.
+-- 2. download cc_big_http.lua: the library's hard runtime dependency, used at
+-- runtime for large audio GETs. It has a single fixed upstream URL and is not
+-- part of our bundle, so it ignores the source picked above. The installer
+-- itself does not need to load it (see fetchDep above for why the installer
+-- sticks to plain GETs).
 mkdirp(libDir)
-local big = loadBigHttp(libDir .. "cc_big_http.lua")
+local ccBytes, ccErr = fetchDep(CONFIG.ccBigHttp, libDir .. "cc_big_http.lua",
+  "cc_big_http (chunked-GET helper, GPL-2.0)")
+if not ccBytes then
+  die("cannot download cc_big_http.lua from " .. CONFIG.ccBigHttp
+    .. " (allow git.liulikeji.cn in http_whitelist, or fetch it manually): "
+    .. tostring(ccErr))
+end
 
 -- 3. download + extract the library. Mirrors can serve a *stale*
 -- dist/ncm.tar: jsDelivr caches each file of an @main URL separately, so it is
@@ -357,11 +327,7 @@ for i = 1, #bundleSources do
   log("Downloading library bundle (%d/%d) ...", i, #bundleSources)
   log("  %s/dist/ncm.tar", base)
 
-  local handle, err = bigGet(big, base .. "/dist/ncm.tar")
-  if not handle then
-    log("  chunked GET failed (%s); using a plain GET instead", tostring(err))
-    handle, err = plainGet(base .. "/dist/ncm.tar")
-  end
+  local handle, err = plainGet(base .. "/dist/ncm.tar")
 
   if not handle then
     log("  download failed: %s", tostring(err))
@@ -392,8 +358,7 @@ if not extracted then
   die("could not obtain a current library bundle from any mirror")
 end
 
--- 4. download the aeslua-cc dependency (also via cc_big_http)
-log("Downloading dependency (aeslua-cc) ...")
+-- 4. download the aeslua-cc dependency
 local deps = {
   "aeslua.lua",
   "aeslua/aes.lua",
@@ -405,26 +370,27 @@ local deps = {
 -- Fallback source for aeslua-cc. Some GitHub proxies 404 this repository
 -- (verified: ghproxy.net returns 404 for it while proxying other repos fine),
 -- and raw.githubusercontent.com is unreachable on some networks. jsDelivr
--- serves the tag reliably, so retry every file there before giving up.
+-- serves the tag reliably, so once the chosen source fails we switch to
+-- jsDelivr for the remaining files instead of retrying every file twice.
 local AESLUA_FALLBACK = "https://cdn.jsdelivr.net/gh/AngusAU293/aeslua-cc@0.2.1-CC/src"
+local aesBase = CONFIG.aeslua
 for _, rel in ipairs(deps) do
-  local bytes, derr = fetchToFile(big, CONFIG.aeslua .. "/" .. rel, libDir .. rel)
-  if not bytes and CONFIG.aeslua ~= AESLUA_FALLBACK then
-    log("  %s: mirror failed (%s), retrying via jsDelivr ...", rel, tostring(derr))
-    bytes, derr = fetchToFile(big, AESLUA_FALLBACK .. "/" .. rel, libDir .. rel)
+  local bytes, derr = fetchDep(aesBase .. "/" .. rel, libDir .. rel, "aeslua-cc " .. rel)
+  if not bytes and aesBase ~= AESLUA_FALLBACK then
+    log("  source failed (%s); switching to jsDelivr for the rest", tostring(derr))
+    aesBase = AESLUA_FALLBACK
+    bytes, derr = fetchDep(aesBase .. "/" .. rel, libDir .. rel, "aeslua-cc " .. rel)
   end
   if not bytes then die("cannot download " .. rel .. ": " .. tostring(derr)) end
 end
-log("  installed %d dependency files", #deps)
 
 -- 5. download cc_speakerlib as the `speaker` program, next to cc_big_http.lua
 -- so its automatic detection finds it. `ncm/cli` launches it by absolute path
 -- to play local .dfpwm files only, so its remote-transcode default (-server)
 -- is never used.
-log("Downloading dependency (cc_speakerlib) ...")
-local spBytes, spErr = fetchToFile(big, CONFIG.speakerlib, libDir .. "speaker.lua")
+local spBytes, spErr = fetchDep(CONFIG.speakerlib, libDir .. "speaker.lua",
+  "cc_speakerlib (the `speaker` program)")
 if not spBytes then die("cannot download speakerlib.lua: " .. tostring(spErr)) end
-log("  installed %sspeaker.lua (%d bytes)", libDir, spBytes)
 
 -- 6. verify files landed and print usage.
 -- We deliberately do NOT call require("ncm") here: `wget run` executes this
