@@ -136,11 +136,18 @@ end
 -- every downloaded chunk / decoded frame, so throttle to one redraw per 500 ms.
 -- The first redraw of a new label always goes through, so each phase appears
 -- immediately.
-local lastDraw, lastLabel = 0, nil
+local lastDraw, lastLabel, progressRow = 0, nil, nil
 local function drawProgress(label, value, total, detail)
   local now = os.epoch("utc")
   if label == lastLabel and now - lastDraw < 500 then return end
-  lastDraw, lastLabel = now, label
+  if label ~= lastLabel then
+    -- A new phase takes over the row the cursor is on now (the line just
+    -- below its header) and keeps drawing there, so phases cannot overlap.
+    progressRow = select(2, term.getCursorPos())
+    lastLabel = label
+    lastDraw = 0
+  end
+  lastDraw = now
 
   local w, h = term.getSize()
   local pct = 0
@@ -160,9 +167,18 @@ local function drawProgress(label, value, total, detail)
   -- bottom-right corner makes the terminal wrap and scroll, which scrolled the
   -- freshly drawn bar off screen (it only appeared to "flash").
   if #text > w - 1 then text = text:sub(1, w - 1) end
-  term.setCursorPos(1, h)
+  term.setCursorPos(1, progressRow)
   term.clearLine()
   term.write(text)
+end
+
+-- Move below the finished bar so following output does not land on it.
+local function finishProgress()
+  if progressRow then
+    local _, h = term.getSize()
+    term.setCursorPos(1, math.min(progressRow + 1, h))
+  end
+  progressRow, lastLabel = nil, nil
 end
 
 -- Fetch a lossless URL for `id` and play it: FLAC is decoded locally by the
@@ -220,7 +236,7 @@ local function playSong(id, displayName)
         drawProgress("Download ", n, sizeHint, ("%.2f MB"):format(n / 1048576))
       end,
     })
-    print("")
+    finishProgress()
     if not flac then
       print("Download failed: " .. tostring(derr))
       waitForEnter()
@@ -234,7 +250,7 @@ local function playSong(id, displayName)
           ("%.0fs"):format(total / 48000))
       end,
     })
-    print("")
+    finishProgress()
   end
   if not dfpwm then
     print("Decode failed: " .. tostring(samplesOrErr))
@@ -251,6 +267,7 @@ local function playSong(id, displayName)
       drawProgress("Play     ", played, totalSamples, ("%.0fs"):format(played / 48000))
     end,
   })
+  finishProgress()
   if not samples then
     print("Playback failed: " .. tostring(err))
   else
