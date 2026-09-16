@@ -21,16 +21,32 @@
 --
 -- DEPENDENCY IS MANDATORY
 --   There is intentionally NO fallback to the built-in `http.get`: using it
---   would silently fail above 16 MiB. Resolution order below is `require` first
---   (normal install), then `/cc_big_http.lua` (manual placement); if neither
---   yields a module with `.get`, we raise an actionable error. We never return
---   nil just because the dependency is missing.
+--   would silently fail above 16 MiB. The dependency is installed into this
+--   library's own dependency directory (ncm/lib) by install.lua. Resolution
+--   order below is `require` first (package.path, dir-aware), then the
+--   absolute path inside ncm/lib, then the legacy root location
+--   "/cc_big_http.lua"; if none yields a module with `.get` we raise an
+--   actionable error. We never return nil just because the dependency is
+--   missing.
 --
 -- API
 --   M.get(url, headers, binary) -> response | nil, err, fail
 --   M.get({ url = "...", headers = {...}, binary = true })  -- cc_big_http form
 
+local lib = require("ncm.lib")
+
 local M = {}
+
+-- Load a module table from an explicit file path, validating its shape.
+local function loadTable(path)
+  local chunk = loadfile(path)
+  if not chunk then return nil end
+  local ok, mod = pcall(chunk)
+  if ok and type(mod) == "table" and type(mod.get) == "function" then
+    return mod
+  end
+  return nil
+end
 
 -- Resolve cc_big_http exactly once and cache it in this local.
 local bigHttp
@@ -39,19 +55,14 @@ do
   if ok and type(mod) == "table" and type(mod.get) == "function" then
     bigHttp = mod
   else
-    local chunk = loadfile("/cc_big_http.lua")
-    if chunk then
-      local okChunk, modChunk = pcall(chunk)
-      if okChunk and type(modChunk) == "table" and type(modChunk.get) == "function" then
-        bigHttp = modChunk
-      end
-    end
+    bigHttp = loadTable(lib.dir .. "/cc_big_http.lua")
+      or loadTable("/cc_big_http.lua")
   end
 
   if not bigHttp then
     error(
       "cc_big_http is required but was not found. "
-      .. "Run install.lua, or place cc_big_http.lua at /cc_big_http.lua."
+      .. "Run install.lua, or place cc_big_http.lua in " .. lib.dir .. "/."
     )
   end
 end

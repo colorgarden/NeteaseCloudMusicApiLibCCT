@@ -3,16 +3,29 @@
   NeteaseCloudMusicApi (library name: `ncm`).
 
   What it does
-    1. removes any previous install (ncm/, aeslua.lua, aeslua/,
-       cc_big_http.lua, speaker.lua),
+    1. removes any previous install (ncm/, plus the root-level dependency
+       files written by older versions of this installer),
     2. bootstraps cc_big_http with a plain http.get, then loads it,
     3. streams dist/ncm.tar off the internet straight into the filesystem
        through cc_big_http (uncompressed USTAR - no gzip library or temp file
        needed),
     4. downloads the aeslua-cc dependency through cc_big_http,
-    5. downloads cc_speakerlib as /speaker.lua (the speaker program `ncm/cli`
-       uses for local .dfpwm passthrough),
+    5. downloads cc_speakerlib, the speaker program `ncm/cli` uses for local
+       .dfpwm passthrough,
     6. prints a usage hint.
+
+  Layout
+    Everything lives inside one deletable tree; no files are scattered in the
+    root directory:
+
+      /ncm/                 the library itself (require("ncm"))
+      /ncm/lib/aeslua.lua   aeslua-cc        (LGPL)
+      /ncm/lib/aeslua/      aeslua-cc modules
+      /ncm/lib/cc_big_http.lua  chunked GET helper   (GPL-2.0)
+      /ncm/lib/speaker.lua      cc_speakerlib        (MPL-2.0)
+
+    ncm/lib.lua tells `require` about /ncm/lib, and cc_speakerlib finds
+    cc_big_http.lua in that same directory.
 
   Requirements
     * An Advanced Computer (or Command Computer) with the HTTP API enabled.
@@ -289,7 +302,14 @@ log("NeteaseCloudMusicApi (ncm) installer for CC:Tweaked")
 log("  bundle : %s/dist/ncm.tar", CONFIG.base)
 log("  target : %s", root)
 
--- 1. remove any previous install
+-- Every third-party dependency goes into the library's own dependency
+-- directory, so a complete install is a single deletable %sncm/ tree.
+local libDir = root .. "ncm/lib/"
+log("  deps   : %s", libDir)
+
+-- 1. remove any previous install. The root-level files are the layout used by
+-- older versions of this installer; they are cleaned up so a stale copy cannot
+-- shadow the dependency directory.
 log("Removing previous install (if any) ...")
 rmrf(root .. "ncm")
 rmrf(root .. "aeslua.lua")
@@ -300,7 +320,8 @@ rmrf(root .. "speaker.lua")
 -- 2. bootstrap cc_big_http (plain http.get), then load it. Everything after
 -- this point goes through it. cc_big_http has a single fixed upstream URL and
 -- is not part of our bundle, so it ignores the source picked above.
-local big = loadBigHttp(root .. "cc_big_http.lua")
+mkdirp(libDir)
+local big = loadBigHttp(libDir .. "cc_big_http.lua")
 
 -- 3. download + extract the library (chunked GET via cc_big_http)
 log("Downloading library bundle ...")
@@ -327,23 +348,23 @@ local deps = {
 -- serves the tag reliably, so retry every file there before giving up.
 local AESLUA_FALLBACK = "https://cdn.jsdelivr.net/gh/AngusAU293/aeslua-cc@0.2.1-CC/src"
 for _, rel in ipairs(deps) do
-  local bytes, derr = fetchToFile(big, CONFIG.aeslua .. "/" .. rel, root .. rel)
+  local bytes, derr = fetchToFile(big, CONFIG.aeslua .. "/" .. rel, libDir .. rel)
   if not bytes and CONFIG.aeslua ~= AESLUA_FALLBACK then
     log("  %s: mirror failed (%s), retrying via jsDelivr ...", rel, tostring(derr))
-    bytes, derr = fetchToFile(big, AESLUA_FALLBACK .. "/" .. rel, root .. rel)
+    bytes, derr = fetchToFile(big, AESLUA_FALLBACK .. "/" .. rel, libDir .. rel)
   end
   if not bytes then die("cannot download " .. rel .. ": " .. tostring(derr)) end
 end
 log("  installed %d dependency files", #deps)
 
--- 5. download cc_speakerlib as /speaker.lua (also via cc_big_http). It is
--- installed next to cc_big_http.lua so its automatic detection finds it.
--- Note: `ncm/cli` only ever asks it to play local .dfpwm files, so its
--- remote-transcode default (-server) is never used.
-log("Downloading dependency (cc_speakerlib -> /speaker.lua) ...")
-local spBytes, spErr = fetchToFile(big, CONFIG.speakerlib, root .. "speaker.lua")
+-- 5. download cc_speakerlib as the `speaker` program, next to cc_big_http.lua
+-- so its automatic detection finds it. `ncm/cli` launches it by absolute path
+-- to play local .dfpwm files only, so its remote-transcode default (-server)
+-- is never used.
+log("Downloading dependency (cc_speakerlib) ...")
+local spBytes, spErr = fetchToFile(big, CONFIG.speakerlib, libDir .. "speaker.lua")
 if not spBytes then die("cannot download speakerlib.lua: " .. tostring(spErr)) end
-log("  installed speaker.lua (%d bytes)", spBytes)
+log("  installed %sspeaker.lua (%d bytes)", libDir, spBytes)
 
 -- 6. verify files landed and print usage.
 -- We deliberately do NOT call require("ncm") here: `wget run` executes this
@@ -351,12 +372,12 @@ log("  installed speaker.lua (%d bytes)", spBytes)
 -- against the *program's* directory, so it cannot see ncm/ from there. That is
 -- expected and not an install failure.
 local installed = fs.exists(root .. "ncm/init.lua")
-  and fs.exists(root .. "aeslua.lua")
-  and fs.exists(root .. "cc_big_http.lua")
-  and fs.exists(root .. "speaker.lua")
+  and fs.exists(libDir .. "aeslua.lua")
+  and fs.exists(libDir .. "cc_big_http.lua")
+  and fs.exists(libDir .. "speaker.lua")
 if installed then
   log("Verifying ... OK (%sncm/init.lua, %saeslua.lua, %scc_big_http.lua, %sspeaker.lua present)",
-    root, root, root, root)
+    root, libDir, libDir, libDir)
 else
   log("Warning: expected files are missing under %s", root)
 end

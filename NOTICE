@@ -28,7 +28,7 @@ This project (MIT) builds on and/or bundles the following components.
    License: GNU General Public License v2.0 (GPL-2.0)
    Copyright (c) the cc_big_http authors.
    NOT included in this distribution. install.lua downloads it at install time
-   and places it at /cc_big_http.lua. It is a hard runtime dependency: every
+   and places it at /ncm/lib/cc_big_http.lua. It is a hard runtime dependency: every
    outgoing GET (via ncm/util/httpx.lua) goes through it so that large responses
    are fetched with HTTP Range requests in 15 MiB chunks, working around the
    single HTTP response size cap (http_max_download, 16 MiB by default). This
@@ -40,7 +40,7 @@ This project (MIT) builds on and/or bundles the following components.
    (the upstream repository ships no LICENSE file). It is derived from the
    CC: Tweaked `speaker` program.
    NOT included in this distribution. install.lua downloads speakerlib.lua at
-   install time and places it at /speaker.lua. `ncm/cli` launches it to play
+   install time and places it at /ncm/lib/speaker.lua. `ncm/cli` launches it to play
    local .dfpwm files only (its remote-transcode option is never used), and it
-   auto-detects /cc_big_http.lua in its own directory. This project (MIT)
+   auto-detects cc_big_http.lua in its own directory. This project (MIT)
    neither copies nor redistributes speakerlib.lua.

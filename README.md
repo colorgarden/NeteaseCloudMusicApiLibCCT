@@ -60,7 +60,7 @@ wget run https://cdn.jsdelivr.net/gh/colorgarden/NeteaseCloudMusicApiLibCCT@main
 脚本会：
 
 1. **交互式让你选择下载源**（jsDelivr / GitHub raw / ghproxy.net 加速 / 自定义 URL）；
-2. 检测并**删除已安装的旧版本**（`/ncm`、`/aeslua.lua`、`/aeslua`、`/cc_big_http.lua`）；
+2. 检测并**删除已安装的旧版本**（`/ncm/` 整棵树，以及旧版散落在根目录的 `/aeslua.lua`、`/aeslua/`、`/cc_big_http.lua`、`/speaker.lua`）；
 3. 先用内置 `http` API **下载并加载分块下载库 `cc_big_http`**（约 8 KB；它无法用自己下载自己，
    所以这一步必须走原生 `http`，且固定使用上游地址 `git.liulikeji.cn`，与你选择的下载源无关）；
 4. 之后所有下载都经由 `cc_big_http` 的 `Range` 分块：**流式下载并解包** `dist/ncm.tar`
@@ -328,7 +328,7 @@ ncm/cli
 |---|---|---|---|
 | [aeslua-cc](https://github.com/AngusAU293/aeslua-cc) | AES 块原语 | LGPL | 安装脚本自动下载 |
 | [cc_big_http](https://git.liulikeji.cn/xingluo/cc_big_http) | 分块 GET（绕过单响应上限） | **GPL-2.0** | 安装脚本自动下载，**不随本仓库分发** |
-| [cc_speakerlib](https://git.liulikeji.cn/xingluo/cc_speakerlib) | `speaker` 播放程序（本地 DFPWM） | **MPL-2.0**（文件头 SPDX 声明；上游无 LICENSE 文件） | 安装脚本自动下载为 `/speaker.lua`，**不随本仓库分发** |
+| [cc_speakerlib](https://git.liulikeji.cn/xingluo/cc_speakerlib) | `speaker` 播放程序（本地 DFPWM） | **MPL-2.0**（文件头 SPDX 声明；上游无 LICENSE 文件） | 安装脚本自动下载为 `/ncm/lib/speaker.lua`，**不随本仓库分发** |
 | [LibDeflate](https://github.com/SafeteeWoW/LibDeflate) | gzip 解压 | zlib | 已内置 `ncm/util/libdeflate.lua` |
 | [NeteaseCloudMusicApi](https://github.com/Binaryify/NeteaseCloudMusicApi) | 原始 Node 实现 | MIT | 本移植的上游 |
 
@@ -336,12 +336,12 @@ ncm/cli
 `ncm/util/httpx.lua` 交给它，用 HTTP `Range` 分块下载来绕过 `http_max_download`（默认 16 MiB）
 的单响应上限。它采用 **GNU GPL-2.0** 许可，与本项目的 **MIT** 许可**不同**。为尊重其许可，
 本项目**不复制、不内置** `cc_big_http.lua`（仓库目录和 `dist/ncm.tar` 里都没有它），而是由安装脚本
-在安装时从其上游 <https://git.liulikeji.cn/xingluo/cc_big_http> 现场下载到 `/cc_big_http.lua`。
+在安装时从其上游 <https://git.liulikeji.cn/xingluo/cc_big_http> 现场下载到 `/ncm/lib/cc_big_http.lua`。
 再分发者需注意：本仓库自身仍是 MIT 许可，但最终用户的电脑上会额外存在一份 GPL-2.0 的
 `cc_big_http.lua`（由安装脚本获取，**并非本仓库提供**）。
 
 **关于 `cc_speakerlib`**：它是 `ncm/cli` 用来播放本地 `.dfpwm` 的 `speaker` 程序，安装为
-`/speaker.lua`。它**自身会去同目录查找 `cc_big_http.lua`**（所以两者都装在 `/` 下即可自动配合）。
+`/ncm/lib/speaker.lua`。它**自身会去同目录查找 `cc_big_http.lua`**（两者同装在 `/ncm/lib/` 下，天然配合）。
 其源码头部声明 `SPDX-License-Identifier: MPL-2.0`（衍生自 CC:Tweaked 的 `speaker` 程序），
 但**上游仓库没有 LICENSE 文件**。同样地，本项目**不内置**它，由安装脚本从上游现场下载。
 它默认带一个远程转码接口（`-server`），但 `ncm/cli` 只让它播放**本地 `.dfpwm` 直通**，
@@ -385,9 +385,13 @@ ncm/
     qrcode.lua         -- 二维码编码 + PNG + 终端渲染
     gzip.lua libdeflate.lua  -- gzip 解压
     config.lua option.lua index.lua js.lua
+  lib.lua              -- 依赖目录定位器：把 ncm/lib 加入 package.path
+  lib/                 -- 全部第三方依赖都装在这里（安装时下载，不在本仓库内）
+    aeslua.lua         --   LGPL    · aeslua-cc
+    aeslua/            --   LGPL    · aeslua-cc 子模块
+    cc_big_http.lua    --   GPL-2.0 · 分块 GET
+    speaker.lua        --   MPL-2.0 · cc_speakerlib
 install.lua            -- 一键安装脚本
-/cc_big_http.lua       -- 安装时下载的 GPL-2.0 依赖（不在本仓库内）
-/speaker.lua           -- 安装时下载的 MPL-2.0 依赖（cc_speakerlib，不在本仓库内）
 dist/ncm.tar           -- 预打包的库（安装脚本下载用）
 tools/build_dist.js    -- 重新生成 dist/ncm.tar
 ```

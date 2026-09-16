@@ -12,6 +12,10 @@
 
 local M = {}
 
+-- aeslua-cc is installed into this library's own dependency directory
+-- (ncm/lib); requiring ncm.lib puts that directory on package.path.
+require("ncm.lib")
+
 -- aeslua-cc's modules assign into a global `aeslua` table, so ensure it exists
 -- even if the user did not load the `aeslua` entry file first.
 _G.aeslua = _G.aeslua or {}

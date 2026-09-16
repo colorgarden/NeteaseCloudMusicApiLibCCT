@@ -26,6 +26,14 @@ package.path = "/?.lua;/?/init.lua;" .. package.path
 
 local ncm = require("ncm")
 local qr = require("ncm.util.qrcode")
+local lib = require("ncm.lib")
+
+-- The `speaker` program (cc_speakerlib) is installed into the library's own
+-- dependency directory. It looks for cc_big_http.lua next to itself, so it must
+-- always be launched by its absolute path rather than via shell.resolveProgram
+-- (which searches the current directory and could pick up the ROM's unrelated
+-- `speaker` program instead).
+local SPEAKER_PROGRAM = lib.dir .. "/speaker.lua"
 
 local COOKIE_FILE = "/ncm_cookie"
 
@@ -187,9 +195,9 @@ local function doPlayDfpwm()
   end
 
   local isUrl = target:match("^https?://") ~= nil
-  if isUrl and shell.resolveProgram("speaker") then
+  if isUrl and fs.exists(SPEAKER_PROGRAM) then
     print("Launching the speaker program (DFPWM passthrough)...")
-    shell.run("speaker", target, "-id", "ncm_cli")
+    shell.run(SPEAKER_PROGRAM, target, "-id", "ncm_cli")
     return
   end
 
