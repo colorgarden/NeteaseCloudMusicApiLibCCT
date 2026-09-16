@@ -263,7 +263,7 @@ function M.flacToDfpwm(source, opts)
   local getChunk, closeSource, openErr = openSource(source, opts)
   if not getChunk then return nil, openErr end
 
-  local parts, nparts, total = {}, 0, 0
+  local parts, nparts, total, srcTotal = {}, 0, 0, 0
   local ok, result = pcall(function()
     local dec = flac.newStream(getChunk)
     local resample = newResampler(dec.sampleRate, dec.channels)
@@ -278,7 +278,10 @@ function M.flacToDfpwm(source, opts)
       nparts = nparts + 1
       parts[nparts] = encode(to8bit(samples))
       total = total + #samples
-      if opts.onProgress then opts.onProgress(total, dec) end
+      srcTotal = srcTotal + n
+      -- total = output samples (48 kHz), srcTotal = source samples, which is
+      -- what dec.totalSamples counts, so callers can draw a real percentage.
+      if opts.onProgress then opts.onProgress(total, dec, srcTotal) end
       sleep(0)
     end
     return total

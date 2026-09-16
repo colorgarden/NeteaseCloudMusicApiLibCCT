@@ -129,6 +129,25 @@ local function launchSpeakerProgram(url, note)
   return true
 end
 
+-- ASCII progress bar: "Download [####------]  40%  31.20 MB". Pure ASCII so it
+-- renders on the CC font, and clamped to the terminal width.
+local function drawProgress(label, value, total, detail)
+  local w = term.getSize()
+  local pct = 0
+  if total and total > 0 then
+    pct = math.floor(value / total * 100 + 0.5)
+    if pct > 100 then pct = 100 end
+  end
+  local suffix = (" %3d%%"):format(pct)
+  local tail = detail and ("  " .. detail) or ""
+  local barWidth = w - #label - #suffix - #tail - 3 -- the "[]" and a space
+  if barWidth < 8 then barWidth = 8 end
+  local filled = math.floor(barWidth * pct / 100 + 0.5)
+  term.clearLine()
+  term.write(label .. "[" .. string.rep("#", filled)
+    .. string.rep("-", barWidth - filled) .. "]" .. suffix .. tail)
+end
+
 -- Fetch a lossless URL for `id` and play it: FLAC is decoded locally by the
 -- pure-Lua decoder, anything else is handed to the speaker program, which can
 -- have it transcoded to DFPWM remotely.
@@ -178,10 +197,10 @@ local function playSong(id, displayName)
   local dfpwm, samplesOrErr
   do
     print("1/3 Downloading the whole stream ...")
+    local sizeHint = tonumber(entry.size)
     local flac, derr = audio.download(url, {
       onProgress = function(n)
-        term.clearLine()
-        term.write(("  %.2f MB"):format(n / 1048576))
+        drawProgress("Download ", n, sizeHint, ("%.2f MB"):format(n / 1048576))
       end,
     })
     print("")
@@ -193,9 +212,9 @@ local function playSong(id, displayName)
 
     print("2/3 Decoding (no deadline; this can take a while) ...")
     dfpwm, samplesOrErr = audio.flacToDfpwm({ data = flac }, {
-      onProgress = function(total, dec)
-        term.clearLine()
-        term.write(("  decoded %.0f s @ %d Hz"):format(total / 48000, dec.sampleRate))
+      onProgress = function(total, dec, srcTotal)
+        drawProgress("Decode   ", srcTotal, dec.totalSamples,
+          ("%.0fs"):format(total / 48000))
       end,
     })
     print("")
@@ -207,7 +226,14 @@ local function playSong(id, displayName)
   end
 
   print("3/3 Playing (Ctrl+T to stop) ...")
-  local samples, err = audio.playDfpwmData(dfpwm, { volume = 1.0, speaker = speaker })
+  local totalSamples = samplesOrErr
+  local samples, err = audio.playDfpwmData(dfpwm, {
+    volume = 1.0,
+    speaker = speaker,
+    onProgress = function(played)
+      drawProgress("Play     ", played, totalSamples, ("%.0fs"):format(played / 48000))
+    end,
+  })
   if not samples then
     print("Playback failed: " .. tostring(err))
   else
